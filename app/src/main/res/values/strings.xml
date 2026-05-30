@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Zen</string>
+    <string name="accessibility_service_description">Zen monitors your screen to block short-form content like Reels and Shorts, and prevents scrolling to protect your focus.</string>
+</resources>
