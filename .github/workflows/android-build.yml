@@ -40,9 +40,14 @@ jobs:
     # Publish a "latest" GitHub Release with the APK attached, so it can be
     # downloaded directly on a phone (no login, no zip, no expiry) from:
     #   https://github.com/<owner>/<repo>/releases/latest
+    #
+    # The file name includes the run number so every build has a UNIQUE name.
+    # This defeats the mobile-browser "this file was already downloaded ->
+    # opens the old copy" trap: a new name can never collide with a cached one.
+    # Just tap the highest-numbered zen-r*.apk on the release page.
     - name: Rename APK
       if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
-      run: cp app/build/outputs/apk/debug/app-debug.apk zen.apk
+      run: cp app/build/outputs/apk/debug/app-debug.apk "zen-r${{ github.run_number }}.apk"
 
     - name: Publish to Release
       if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
@@ -50,6 +55,6 @@ jobs:
       with:
         tag_name: latest
         name: Latest build
-        body: "Latest Zen build. Install zen.apk directly on your phone."
-        files: zen.apk
+        body: "Latest Zen build (run #${{ github.run_number }}). Install the zen-r*.apk below directly on your phone."
+        files: zen-r${{ github.run_number }}.apk
         make_latest: true
