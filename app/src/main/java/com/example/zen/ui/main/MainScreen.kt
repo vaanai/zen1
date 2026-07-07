@@ -33,10 +33,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,11 +51,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.zen.data.AppUsageItem
+import com.example.zen.data.ZenPrefs
 import com.example.zen.persona.LineLibrary
 import com.example.zen.persona.LocalPersona
 import com.example.zen.persona.LocalPersonaColors
 import com.example.zen.ui.components.GlassCard
-import com.example.zen.ui.components.PersonaBackdrop
 import com.example.zen.ui.components.PersonaSigil
 import com.example.zen.ui.components.SectionHeader
 import com.example.zen.ui.components.StatChip
@@ -61,16 +65,17 @@ import com.example.zen.ui.design.ZenSpacing
 @Composable
 fun MainScreen(
     viewModel: MainScreenViewModel,
-    onOpenSettings: () -> Unit,
+    prefs: ZenPrefs,
+    onOpenAbout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val persona = LocalPersona.current
 
-    PersonaBackdrop(modifier = modifier) {
-        LazyColumn(
-            modifier = Modifier
+    // Backdrop is provided by HomeScaffold; this page is just content.
+    LazyColumn(
+            modifier = modifier
                 .fillMaxSize()
                 .padding(horizontal = ZenSpacing.screenGutter),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -80,7 +85,7 @@ fun MainScreen(
                 HeaderRow(
                     personaName = persona.displayName,
                     protectionOn = uiState.isAccessibilityEnabled,
-                    onOpenSettings = onOpenSettings
+                    onOpenSettings = onOpenAbout
                 )
             }
 
@@ -144,6 +149,33 @@ fun MainScreen(
                     Spacer(Modifier.height(ZenSpacing.sm))
                 }
             }
+
+            item {
+                SectionHeader("Goal", Modifier.padding(top = ZenSpacing.sectionGap))
+                DailyGoalCard(prefs = prefs, initialCap = uiState.dailyCapMinutes)
+            }
+        }
+}
+
+/** The daily screen-time goal the hero ring measures against. */
+@Composable
+private fun DailyGoalCard(prefs: ZenPrefs, initialCap: Int) {
+    val c = LocalPersonaColors.current
+    var cap by remember { mutableStateOf(initialCap.toFloat()) }
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Text(
+                "Daily screen-time goal: ${cap.toInt()} min",
+                style = MaterialTheme.typography.titleMedium,
+                color = c.textPrimary
+            )
+            Slider(
+                value = cap,
+                onValueChange = { cap = it; prefs.dailyCapMinutes = it.toInt() },
+                valueRange = 15f..240f,
+                steps = 14,
+                colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent)
+            )
         }
     }
 }

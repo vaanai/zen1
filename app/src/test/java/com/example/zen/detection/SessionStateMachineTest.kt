@@ -13,7 +13,7 @@ class SessionStateMachineTest {
     private fun machine(
         allowance: Int = 2,
         friendPass: Boolean = false
-    ) = SessionStateMachine(allowanceFor = { allowance }, friendPassActive = { friendPass })
+    ) = SessionStateMachine(allowanceFor = { allowance }, friendPassActive = { _ -> friendPass })
 
     private fun shortForm(pkg: String = IG, corroborated: Boolean = false) =
         Detection.ShortForm(pkg, "clips_viewer_view_pager", 0.9f, corroborated)
@@ -58,11 +58,25 @@ class SessionStateMachineTest {
     fun `intervenes after allowance exceeded`() {
         val m = machine(allowance = 2)
         m.confirm()
-        assertTrue(m.onScroll(IG, 500L).isEmpty())  // 1
-        assertTrue(m.onScroll(IG, 600L).isEmpty())  // 2
-        val actions = m.onScroll(IG, 700L)          // 3 > 2 → intervene
+        // Human-speed swipes: one per second.
+        assertTrue(m.onScroll(IG, 1400L).isEmpty())  // 1
+        assertTrue(m.onScroll(IG, 2400L).isEmpty())  // 2
+        val actions = m.onScroll(IG, 3400L)          // 3 > 2 → intervene
         assertEquals(listOf<Action>(Action.ShowIntervention(IG, 3, 2)), actions)
         assertTrue(m.state is State.Intervening)
+    }
+
+    @Test
+    fun `scroll event storms count as one swipe`() {
+        val m = machine(allowance = 2)
+        m.confirm() // entry at t=CONFIRM_MS; the landing settle-storm must not count
+        // Instagram fires TYPE_VIEW_SCROLLED dozens of times per second while settling.
+        repeat(50) { i -> m.onScroll(IG, SessionStateMachine.CONFIRM_MS + i * 10L) }
+        assertTrue(m.state is State.InShortForm)
+        assertEquals(0, (m.state as State.InShortForm).scrolls) // all within the debounce window
+        // One real swipe later counts exactly once despite its own event storm.
+        repeat(20) { i -> m.onScroll(IG, 2000L + i * 10L) }
+        assertEquals(1, (m.state as State.InShortForm).scrolls)
     }
 
     @Test
@@ -78,7 +92,7 @@ class SessionStateMachineTest {
         val m = machine(allowance = 5, friendPass = true)
         val entryActions = m.confirm()
         assertTrue(entryActions.isEmpty()) // no block on entry despite effective allowance 0
-        val actions = m.onScroll(IG, 500L)
+        val actions = m.onScroll(IG, 1500L)
         assertEquals(listOf<Action>(Action.ShowIntervention(IG, 1, 0)), actions)
     }
 
@@ -100,15 +114,32 @@ class SessionStateMachineTest {
     // ---- leave & exit escalation -----------------------------------------------------------
 
     @Test
-    fun `leave presses back and schedules a check`() {
+    fun `leave executes exit and schedules one verification`() {
         val m = machine(allowance = 0)
         m.confirm()
         val actions = m.onUserChoseLeave(2000L)
         assertEquals(
-            listOf(Action.PressBack, Action.ScheduleCheck(SessionStateMachine.EXIT_CHECK_MS)),
+            listOf(Action.ExecuteExit(IG), Action.ScheduleCheck(SessionStateMachine.EXIT_CHECK_MS)),
             actions
         )
         assertTrue(m.state is State.Exiting)
+    }
+
+    @Test
+    fun `second leave request while exiting is ignored`() {
+        val m = machine(allowance = 0)
+        m.confirm()
+        m.onUserChoseLeave(2000L)
+        assertTrue(m.onUserChoseLeave(2100L).isEmpty())
+        assertTrue(m.state is State.Exiting)
+    }
+
+    @Test
+    fun `exit check when not exiting is ignored`() {
+        val m = machine(allowance = 2)
+        m.confirm()
+        assertTrue(m.onExitCheck(notShortForm(), 1000L).isEmpty())
+        assertTrue(m.state is State.InShortForm)
     }
 
     @Test
@@ -122,19 +153,14 @@ class SessionStateMachineTest {
     }
 
     @Test
-    fun `still trapped after two backs escalates to home`() {
+    fun `exit check still short-form falls back to home`() {
         val m = machine(allowance = 0)
         m.confirm()
-        m.onUserChoseLeave(2000L) // back press #1
-        // Check 1: still short-form → back press #2.
-        assertEquals(
-            listOf(Action.PressBack, Action.ScheduleCheck(SessionStateMachine.EXIT_CHECK_MS)),
-            m.onExitCheck(shortForm(), 3200L)
-        )
-        // Check 2: STILL short-form → home. Guaranteed escape.
+        m.onUserChoseLeave(2000L)
+        // The configured exit somehow left the user on the feed → HOME. Guaranteed escape.
         assertEquals(
             listOf(Action.PressHome, Action.DismissOverlay),
-            m.onExitCheck(shortForm(), 4400L)
+            m.onExitCheck(shortForm(), 3200L)
         )
         assertTrue(m.state is State.Cooldown)
     }
@@ -199,7 +225,7 @@ class SessionStateMachineTest {
         assertTrue(m.onWatchdog(SessionStateMachine.CONFIRM_MS + 100).isEmpty())
         assertTrue(m.state is State.Intervening)
         val actions = m.onWatchdog(SessionStateMachine.CONFIRM_MS + SessionStateMachine.WATCHDOG_MS + 1)
-        assertTrue(actions.contains(Action.PressBack))
+        assertTrue(actions.any { it is Action.ExecuteExit })
         assertTrue(m.state is State.Exiting)
     }
 

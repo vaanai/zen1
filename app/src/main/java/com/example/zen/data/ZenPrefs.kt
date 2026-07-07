@@ -131,21 +131,28 @@ class ZenPrefs(context: Context) : ZenStatsSource {
      * of 2 rather than carrying the broken behavior forward. Explicit non-zero values carry over.
      */
     private fun migrateIfNeeded() {
-        if (prefs.getBoolean(KEY_MIGRATED_V2, false)) return
-        val legacyBlocked = prefs.getStringSet(KEY_BLOCKED, null)
-        val legacyScrolls = prefs.getInt(KEY_ALLOWED_SCROLLS, 0)
-        val allowance = if (legacyScrolls > 0) legacyScrolls else AppGuardConfig.DEFAULT_ALLOWANCE
-        appConfigs = KnownApps.apps.associate { app ->
-            app.key to AppGuardConfig(
-                enabled = legacyBlocked == null || app.packages.any { it in legacyBlocked },
-                mode = GuardMode.FRICTION,
-                scrollAllowance = allowance
-            )
+        if (!prefs.getBoolean(KEY_MIGRATED_V2, false)) {
+            val legacyBlocked = prefs.getStringSet(KEY_BLOCKED, null)
+            val legacyScrolls = prefs.getInt(KEY_ALLOWED_SCROLLS, 0)
+            val allowance = if (legacyScrolls > 0) legacyScrolls else AppGuardConfig.DEFAULT_ALLOWANCE
+            appConfigs = KnownApps.apps.associate { app ->
+                app.key to AppGuardConfig(
+                    enabled = legacyBlocked == null || app.packages.any { it in legacyBlocked },
+                    mode = GuardMode.FRICTION,
+                    scrollAllowance = allowance
+                )
+            }
+            prefs.edit()
+                .putInt(KEY_ALLOWED_SCROLLS, allowance)
+                .putBoolean(KEY_MIGRATED_V2, true)
+                .apply()
         }
-        prefs.edit()
-            .putInt(KEY_ALLOWED_SCROLLS, allowance)
-            .putBoolean(KEY_MIGRATED_V2, true)
-            .apply()
+        // v3: friend pass moves from one global switch to a per-app setting.
+        if (!prefs.getBoolean(KEY_MIGRATED_V3, false)) {
+            val legacyFriendPass = prefs.getBoolean(KEY_FRIEND_PASS, true)
+            appConfigs = appConfigs.mapValues { (_, cfg) -> cfg.copy(friendPass = legacyFriendPass) }
+            prefs.edit().putBoolean(KEY_MIGRATED_V3, true).apply()
+        }
     }
 
     override var dailyCapMinutes: Int
@@ -292,7 +299,13 @@ class ZenPrefs(context: Context) : ZenStatsSource {
         private const val COOLDOWN_MS = 2 * 60 * 1000L
         private const val UNLOCK_WINDOW_MS = 5 * 60 * 1000L
 
-        private val json = Json { ignoreUnknownKeys = true }
+        // coerceInputValues: an unknown enum value in stored JSON coerces to the property
+        // default instead of throwing — without it, a future enum rename would trip the
+        // decode catch and silently reset every per-app guard setting.
+        private val json = Json {
+            ignoreUnknownKeys = true
+            coerceInputValues = true
+        }
 
         /** Known short-form-capable apps, guarded by default. */
         val DEFAULT_BLOCKED: Set<String> = KnownApps.allPackages
@@ -310,6 +323,7 @@ class ZenPrefs(context: Context) : ZenStatsSource {
         private const val KEY_PENDING_UNLOCK = "pending_unlock_at"
         private const val KEY_APP_CONFIGS = "app_guard_configs"
         private const val KEY_MIGRATED_V2 = "prefs_migrated_v2"
+        private const val KEY_MIGRATED_V3 = "prefs_migrated_v3"
         private const val KEY_DIAGNOSTICS = "diagnostics_enabled"
         private const val KEY_CONFIG_VERSION = "detection_config_version"
         private const val KEY_CONFIG_FETCHED_AT = "detection_config_fetched_at"

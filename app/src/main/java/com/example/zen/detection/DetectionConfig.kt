@@ -51,6 +51,20 @@ data class DetectionConfig(
 @Serializable
 enum class MatchStrategy { VIEW_ID, VIEW_ID_OR_TEXT, WHOLE_APP }
 
+/**
+ * Where an app can send the user on "Leave", beyond the universal launcher-home exit.
+ * Lives in the remote config on purpose: deep links are unofficial and break with app
+ * updates — a broken URI is hotfixed by editing the repo JSON, no APK release needed.
+ */
+@Serializable
+data class ExitRoutes(
+    /** APP_HOME supported: via launch intent, or [appHomeUri] when a deep link works better. */
+    val appHome: Boolean = false,
+    val appHomeUri: String? = null,
+    /** Presence means the MESSAGES exit is supported. */
+    val messagesUri: String? = null
+)
+
 @Serializable
 data class AppMatcher(
     val key: String,
@@ -61,7 +75,8 @@ data class AppMatcher(
     val minCoverage: Float = 0.55f,
     val requireVisible: Boolean = true,
     val classNameHints: List<String> = emptyList(),
-    val negativeViewIds: List<String> = emptyList()
+    val negativeViewIds: List<String> = emptyList(),
+    val exits: ExitRoutes = ExitRoutes()
 ) {
     val viewIdsLower: Set<String> by lazy { viewIds.map { it.lowercase() }.toSet() }
     val textsLower: Set<String> by lazy { texts.map { it.lowercase() }.toSet() }

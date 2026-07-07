@@ -127,7 +127,10 @@ private fun commit(
         .flatMap { it.packages }
         .toSet()
     prefs.blockedPackages = packages
-    prefs.friendPassEnabled = friendPass
+    prefs.friendPassEnabled = friendPass // legacy seed for migration
+    KnownApps.apps.forEach { app ->
+        prefs.updateConfig(app.key) { it.copy(friendPass = friendPass) }
+    }
     prefs.dailyCapMinutes = dailyCap
     if (password.length == ZenPrefs.PASSWORD_LENGTH) {
         prefs.lockPassword = password

@@ -10,8 +10,10 @@ package com.example.zen.detection
  * construction:
  *
  *  - [State.Intervening] hard-suppresses all detections while the overlay is up.
- *  - [State.Exiting] owns navigation: back, verify, back again, then HOME — the overlay stays
- *    up masking the transition, and HOME only fires while detection is still positive.
+ *  - [State.Exiting] owns navigation: one deterministic exit (the service resolves the user's
+ *    configured [com.example.zen.data.ExitAction] — launcher home, the app's own home, or its
+ *    DM inbox), then one windows-based verification; if the short-form surface somehow
+ *    survived, HOME fires as the universal fallback. The overlay masks the whole transition.
  *  - [State.Cooldown] absorbs transient matches on whatever screen the exit lands on.
  *  - [State.Confirming] debounces one-frame matches during screen transitions.
  *
@@ -23,8 +25,8 @@ package com.example.zen.detection
 class SessionStateMachine(
     /** Scrolls permitted before intervening (already including any earned/lenient bonus). */
     private val allowanceFor: (String) -> Int,
-    /** Whether a Friend Pass (arrived from a DM) is currently active. */
-    private val friendPassActive: () -> Boolean
+    /** Whether a Friend Pass (arrived from a DM) is currently active for this app. */
+    private val friendPassActive: (String) -> Boolean
 ) {
 
     sealed interface State {
@@ -32,7 +34,7 @@ class SessionStateMachine(
         data class Confirming(val pkg: String, val firstSeenAt: Long) : State
         data class InShortForm(val pkg: String, val scrolls: Int, val friendPass: Boolean) : State
         data class Intervening(val pkg: String, val shownAt: Long) : State
-        data class Exiting(val pkg: String, val startedAt: Long, val backPresses: Int) : State
+        data class Exiting(val pkg: String, val startedAt: Long) : State
         data class Cooldown(val pkg: String, val until: Long) : State
         data class OverridePass(val pkg: String, val until: Long) : State
     }
@@ -40,7 +42,8 @@ class SessionStateMachine(
     sealed interface Action {
         /** Show the friction screen. The service enriches this with persona/line/tier. */
         data class ShowIntervention(val pkg: String, val scrollsUsed: Int, val allowance: Int) : Action
-        data object PressBack : Action
+        /** Perform the user's configured exit for [pkg] (service resolves which one). */
+        data class ExecuteExit(val pkg: String) : Action
         data object PressHome : Action
         data object DismissOverlay : Action
         /** Re-evaluate detection after [delayMs] and feed the result to [onExitCheck]. */
@@ -49,6 +52,15 @@ class SessionStateMachine(
 
     var state: State = State.Idle
         private set
+
+    /**
+     * Last time a scroll was *counted*. Instagram fires TYPE_VIEW_SCROLLED in storms (progress
+     * bars, list settling) — dozens per second — so raw events would exhaust any allowance in
+     * milliseconds. A human swipe happens at most ~1/sec; counting one scroll per
+     * [SCROLL_DEBOUNCE_MS] makes the allowance mean what it says. Initialized on feed entry so
+     * the landing settle-storm never counts as the first swipe.
+     */
+    private var lastScrollCountedAt = 0L
 
     val stateName: String get() = state::class.simpleName ?: "?"
 
@@ -89,6 +101,8 @@ class SessionStateMachine(
         expire(now)
         val s = state
         if (s !is State.InShortForm || s.pkg != pkg) return emptyList()
+        if (now - lastScrollCountedAt < SCROLL_DEBOUNCE_MS) return emptyList()
+        lastScrollCountedAt = now
         val scrolls = s.scrolls + 1
         val allowance = if (s.friendPass) 0 else allowanceFor(pkg)
         return if (scrolls > allowance) {
@@ -119,9 +133,9 @@ class SessionStateMachine(
     /** User tapped Leave (or pressed back) on the friction screen. */
     fun onUserChoseLeave(now: Long): List<Action> {
         val s = state as? State.Intervening ?: return emptyList()
-        state = State.Exiting(s.pkg, now, backPresses = 1)
+        state = State.Exiting(s.pkg, now)
         // Overlay stays up (showing the leave affirmation) and masks the navigation under it.
-        return listOf(Action.PressBack, Action.ScheduleCheck(EXIT_CHECK_MS))
+        return listOf(Action.ExecuteExit(s.pkg), Action.ScheduleCheck(EXIT_CHECK_MS))
     }
 
     /** User completed the hold-to-continue override. */
@@ -131,24 +145,18 @@ class SessionStateMachine(
         return listOf(Action.DismissOverlay)
     }
 
-    /** Result of a [Action.ScheduleCheck] re-evaluation while exiting. */
+    /**
+     * Result of the single [Action.ScheduleCheck] verification after an exit. One check, one
+     * decision: escaped → dismiss; still on the short-form surface → HOME (guaranteed escape),
+     * then dismiss. Either way the session enters [State.Cooldown].
+     */
     fun onExitCheck(detection: Detection, now: Long): List<Action> {
         val s = state as? State.Exiting ?: return emptyList()
-        val stillShortForm = detection is Detection.ShortForm && detection.pkg == s.pkg
-        return when {
-            !stillShortForm -> {
-                state = State.Cooldown(s.pkg, now + COOLDOWN_MS)
-                listOf(Action.DismissOverlay)
-            }
-            s.backPresses < MAX_BACK_PRESSES -> {
-                state = s.copy(backPresses = s.backPresses + 1)
-                listOf(Action.PressBack, Action.ScheduleCheck(EXIT_CHECK_MS))
-            }
-            else -> {
-                // Still trapped after MAX_BACK_PRESSES backs: go home. Guaranteed escape.
-                state = State.Cooldown(s.pkg, now + COOLDOWN_MS)
-                listOf(Action.PressHome, Action.DismissOverlay)
-            }
+        state = State.Cooldown(s.pkg, now + COOLDOWN_MS)
+        return if (detection is Detection.ShortForm && detection.pkg == s.pkg) {
+            listOf(Action.PressHome, Action.DismissOverlay)
+        } else {
+            listOf(Action.DismissOverlay)
         }
     }
 
@@ -165,8 +173,9 @@ class SessionStateMachine(
     // ---- internals -------------------------------------------------------------------------
 
     private fun enter(pkg: String, now: Long): List<Action> {
-        val friendPass = friendPassActive()
+        val friendPass = friendPassActive(pkg)
         val allowance = if (friendPass) 0 else allowanceFor(pkg)
+        lastScrollCountedAt = now // the landing settle-storm must not count as a swipe
         state = State.InShortForm(pkg, scrolls = 0, friendPass = friendPass)
         // Direct entry with zero allowance intervenes immediately; a Friend Pass lets the
         // landed video play and intervenes on the first scroll past it.
@@ -196,8 +205,8 @@ class SessionStateMachine(
 
     companion object {
         const val CONFIRM_MS = 400L
+        const val SCROLL_DEBOUNCE_MS = 500L
         const val EXIT_CHECK_MS = 1200L
-        const val MAX_BACK_PRESSES = 2
         const val COOLDOWN_MS = 4000L
         const val OVERRIDE_PASS_MS = 2 * 60 * 1000L
         const val WATCHDOG_MS = 30_000L

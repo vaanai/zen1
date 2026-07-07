@@ -1,17 +1,22 @@
 package com.example.zen
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
+import com.example.zen.data.ExitAction
 import com.example.zen.data.KnownApps
 import com.example.zen.data.ZenPrefs
 import com.example.zen.detection.Detection
 import com.example.zen.detection.DetectionConfigStore
 import com.example.zen.detection.DetectionEngine
 import com.example.zen.detection.DetectionLog
+import com.example.zen.detection.ExitRoutes
 import com.example.zen.detection.SessionStateMachine
 import com.example.zen.detection.SessionStateMachine.Action
 import com.example.zen.persona.LineLibrary
@@ -54,6 +59,8 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
 
     private var lastDirectMessageTime = 0L
     private var lastDumpTime = 0L
+    private var lastPositiveLogAt = 0L
+    private var lastLoggedState = ""
 
     private val exitCheckRunnable = Runnable { runExitCheck() }
     private val watchdogRunnable = Runnable {
@@ -70,8 +77,8 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
                 val base = prefs.configFor(pkg).scrollAllowance
                 if (prefs.earnedScrollsEnabled) base + 1 else base
             },
-            friendPassActive = {
-                prefs.friendPassEnabled &&
+            friendPassActive = { pkg ->
+                prefs.configFor(pkg).friendPass &&
                     System.currentTimeMillis() - lastDirectMessageTime < FRIEND_PASS_WINDOW_MS
             }
         )
@@ -149,10 +156,11 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
         for (action in actions) {
             when (action) {
                 is Action.ShowIntervention -> showIntervention(action)
-                Action.PressBack -> performGlobalAction(GLOBAL_ACTION_BACK)
+                is Action.ExecuteExit -> executeExit(action.pkg)
                 Action.PressHome -> performGlobalAction(GLOBAL_ACTION_HOME)
                 Action.DismissOverlay -> {
                     handler.removeCallbacks(watchdogRunnable)
+                    handler.removeCallbacks(exitCheckRunnable)
                     overlay?.dismiss()
                 }
                 is Action.ScheduleCheck -> {
@@ -196,11 +204,83 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
         }
     }
 
-    /** Re-evaluation while exiting: is the screen under the overlay still short-form? */
+    /**
+     * Performs the user's configured exit for [pkg]. Every path that can fail falls back to
+     * `GLOBAL_ACTION_HOME` — the one exit Android makes unconditionally reliable — so the
+     * worst case is always "kicked to the launcher", never "stuck in the feed".
+     *
+     * Note: never `GLOBAL_ACTION_BACK` here. The overlay is the focused window, so an injected
+     * back would be swallowed by our own screen (the original field bug).
+     */
+    private fun executeExit(pkg: String) {
+        val routes = DetectionConfigStore.current.matcherFor(pkg)?.exits
+        val configured = prefs.configFor(pkg).exitAction
+        val ok = when (configured) {
+            ExitAction.LEAVE_APP -> false // handled by the HOME fallback below
+            ExitAction.APP_HOME -> launchAppHome(pkg, routes)
+            ExitAction.MESSAGES -> launchDeepLink(pkg, routes?.messagesUri)
+        }
+        if (!ok) performGlobalAction(GLOBAL_ACTION_HOME)
+        DetectionLog.log(
+            DetectionLog.Entry(
+                at = System.currentTimeMillis(), pkg = pkg, event = "exit",
+                state = machine.stateName,
+                decision = if (ok) "$configured ok" else "$configured -> fallback HOME"
+            )
+        )
+    }
+
+    private fun launchAppHome(pkg: String, routes: ExitRoutes?): Boolean {
+        if (routes?.appHome != true) return false
+        return try {
+            val intent = routes.appHomeUri
+                ?.let { Intent(Intent.ACTION_VIEW, Uri.parse(it)).setPackage(pkg) }
+                ?: packageManager.getLaunchIntentForPackage(pkg) // requires <queries> visibility
+                ?: return false
+            intent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "appHome launch failed for $pkg", e)
+            false
+        }
+    }
+
+    private fun launchDeepLink(pkg: String, uri: String?): Boolean {
+        if (uri.isNullOrBlank()) return false
+        return try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+                    .setPackage(pkg)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "deep link launch failed for $pkg ($uri)", e)
+            false
+        }
+    }
+
+    /**
+     * The top real application window's root. Never [rootInActiveWindow] during an exit: our
+     * focusable overlay IS the active window then, and mistaking it for the foreground app is
+     * exactly the bug that made "Leave" a no-op. The overlay reports as an accessibility
+     * overlay type, so filtering to application windows excludes it structurally.
+     */
+    private fun topAppRoot(): AccessibilityNodeInfo? =
+        windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .maxByOrNull { it.layer }
+            ?.root
+
+    /** The single post-exit verification: is the screen under the overlay still short-form? */
     private fun runExitCheck() {
         val now = System.currentTimeMillis()
         val exiting = machine.state as? SessionStateMachine.State.Exiting ?: return
-        val root = rootInActiveWindow
+        val root = topAppRoot()
         val currentPkg = root?.packageName?.toString()
         val detection = if (currentPkg == exiting.pkg) {
             evaluate(exiting.pkg, root, eventClassName = null)
@@ -214,7 +294,10 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
     // ---- InterventionHost (called from the overlay UI) ---------------------------------------
 
     override fun onLeaveRequested() {
-        handler.post { execute(machine.onUserChoseLeave(System.currentTimeMillis())) }
+        handler.post {
+            overlay?.noteLeaving() // the affirmation gets a minimum visible window
+            execute(machine.onUserChoseLeave(System.currentTimeMillis()))
+        }
     }
 
     override fun onOverrideCompleted() {
@@ -227,6 +310,14 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
         // Positives are always logged; negatives only while diagnostics are on (volume).
         val interesting = detection is Detection.ShortForm || prefs.diagnosticsEnabled
         if (!interesting) return
+        // Content-changed storms produce dozens of identical positives per second; unless
+        // diagnostics are on, only log when the machine state changed or once per second.
+        if (detection is Detection.ShortForm && !prefs.diagnosticsEnabled) {
+            val now = System.currentTimeMillis()
+            if (machine.stateName == lastLoggedState && now - lastPositiveLogAt < 1000L) return
+            lastPositiveLogAt = now
+            lastLoggedState = machine.stateName
+        }
         DetectionLog.log(
             DetectionLog.Entry(
                 at = System.currentTimeMillis(),

@@ -6,6 +6,16 @@
     <!-- Only used to refresh the detection config from the project repo; the app has no server. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Package visibility for the guarded apps: without this, getLaunchIntentForPackage
+         returns null on targetSdk 30+ and the "App home" exit silently degrades to HOME. -->
+    <queries>
+        <package android:name="com.instagram.android" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.zhiliaoapp.musically" />
+        <package android:name="com.ss.android.ugc.trill" />
+        <package android:name="com.snapchat.android" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"

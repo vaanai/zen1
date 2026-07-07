@@ -75,11 +75,23 @@ class InterceptionOverlay(
     private val handler = Handler(Looper.getMainLooper())
     private var current: View? = null
     private var lifecycleHost: OverlayLifecycleOwner? = null
+    private var leavingAt = 0L
 
     val isShowing: Boolean get() = current != null
 
+    /**
+     * Marks that the user chose Leave. Exits are near-instant now, so without a floor the
+     * leave affirmation ("Well left.") would flash for a couple of frames before the service
+     * confirms the escape and dismisses. [dismiss] honors a minimum visible window after this.
+     */
+    fun noteLeaving() {
+        leavingAt = android.os.SystemClock.uptimeMillis()
+    }
+
     fun show(request: InterventionRequest) {
         handler.post {
+            // A delayed dismissal from a previous intervention must not remove the new view.
+            handler.removeCallbacks(removeRunnable)
             removeNow()
 
             val lifecycleOwner = OverlayLifecycleOwner().apply { onCreate() }
@@ -125,9 +137,16 @@ class InterceptionOverlay(
         }
     }
 
+    private val removeRunnable = Runnable { removeNow() }
+
     /** Called by the service once the escape is confirmed, the foreground app changed, or on destroy. */
     fun dismiss() {
-        handler.post { removeNow() }
+        val remaining = if (leavingAt == 0L) 0L else {
+            (leavingAt + MIN_AFFIRMATION_MS - android.os.SystemClock.uptimeMillis())
+                .coerceIn(0L, MIN_AFFIRMATION_MS)
+        }
+        handler.removeCallbacks(removeRunnable)
+        handler.postDelayed(removeRunnable, remaining)
     }
 
     private fun removeNow() {
@@ -140,6 +159,12 @@ class InterceptionOverlay(
         lifecycleHost?.onDestroy()
         current = null
         lifecycleHost = null
+        leavingAt = 0L
+    }
+
+    companion object {
+        /** Minimum time the leave affirmation stays visible, masking the app switch beneath. */
+        private const val MIN_AFFIRMATION_MS = 700L
     }
 }
 

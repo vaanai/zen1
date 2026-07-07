@@ -26,7 +26,8 @@ class DetectionConfigTest {
               "minCoverage": 0.55,
               "requireVisible": true,
               "classNameHints": [],
-              "negativeViewIds": []
+              "negativeViewIds": [],
+              "exits": { "appHome": true, "messagesUri": "instagram://direct_inbox" }
             },
             {
               "key": "tiktok",
@@ -54,6 +55,18 @@ class DetectionConfigTest {
         assertTrue(tiktok.viewIds.isEmpty())
         assertTrue(tiktok.requireVisible)
         assertEquals(0.55f, tiktok.minCoverage)
+    }
+
+    @Test
+    fun `exit routes parse when present and default when absent`() {
+        val config = json.decodeFromString<DetectionConfig>(sample)
+        val ig = config.matcherFor("com.instagram.android")!!
+        assertTrue(ig.exits.appHome)
+        assertEquals("instagram://direct_inbox", ig.exits.messagesUri)
+        // TikTok entry has no exits block → defaults: nothing beyond LEAVE_APP supported.
+        val tiktok = config.matcherFor("com.zhiliaoapp.musically")!!
+        assertFalse(tiktok.exits.appHome)
+        assertNull(tiktok.exits.messagesUri)
     }
 
     @Test

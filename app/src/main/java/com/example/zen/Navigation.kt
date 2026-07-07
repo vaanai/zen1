@@ -27,10 +27,10 @@ import com.example.zen.data.ZenPrefs
 import com.example.zen.detection.DetectionConfigStore
 import com.example.zen.persona.PersonaTheme
 import com.example.zen.ui.debug.DebugScreen
-import com.example.zen.ui.main.MainScreen
+import com.example.zen.ui.home.HomeScaffold
 import com.example.zen.ui.main.MainScreenViewModel
 import com.example.zen.ui.onboarding.OnboardingScreen
-import com.example.zen.ui.settings.SettingsScreen
+import com.example.zen.ui.settings.AboutScreen
 import kotlinx.coroutines.delay
 
 /**
@@ -100,16 +100,18 @@ fun ZenApp() {
                         entry<Dashboard> {
                             val viewModel: MainScreenViewModel =
                                 viewModel { MainScreenViewModel(statusProvider, prefs) }
-                            MainScreen(
+                            HomeScaffold(
                                 viewModel = viewModel,
-                                onOpenSettings = { backStack.add(SettingsRoute) }
-                            )
-                        }
-                        entry<SettingsRoute> {
-                            SettingsScreen(
                                 prefs = prefs,
                                 selectedPersona = persona,
                                 onPersonaSelected = setPersona,
+                                onOpenAbout = { backStack.add(SettingsRoute) }
+                            )
+                        }
+                        entry<SettingsRoute> {
+                            AboutScreen(
+                                isAccessibilityEnabled = accessibilityEnabled,
+                                isUsageEnabled = usageEnabled,
                                 onBack = { backStack.removeLastOrNull() },
                                 onOpenDebug = { backStack.add(DebugRoute) }
                             )
