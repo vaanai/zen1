@@ -4,6 +4,11 @@ plugins {
   alias(libs.plugins.kotlin.serialization)
 }
 
+// CI injects the run number so every published build carries a distinct, monotonically
+// increasing versionCode — otherwise sideloading a new APK is a same-version reinstall
+// and there is no way to tell builds apart on the phone.
+val ciRunNumber: Int? = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+
 android {
     namespace = "com.example.zen"
     compileSdk = 36
@@ -12,8 +17,9 @@ android {
         applicationId = "com.zenblocker.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        // +100 keeps CI codes above the historically shipped versionCode 2 and local builds.
+        versionCode = ciRunNumber?.plus(100) ?: 3
+        versionName = ciRunNumber?.let { "1.2.$it" } ?: "1.2.0-local"
     }
 
     signingConfigs {
@@ -84,6 +90,9 @@ dependencies {
 
   // Frosted-glass depth (RenderEffect on API 31+, graceful translucency fallback below)
   implementation(libs.haze)
+
+  // Detection config + per-app guard settings are serialized as JSON
+  implementation(libs.kotlinx.serialization.json)
   // Tooling
   debugImplementation(libs.androidx.compose.ui.tooling)
   // Instrumented tests

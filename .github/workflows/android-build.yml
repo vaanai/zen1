@@ -49,6 +49,15 @@ jobs:
       if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
       run: cp app/build/outputs/apk/debug/app-debug.apk "zen-r${{ github.run_number }}.apk"
 
+    # Delete the previous "latest" release (and its tag) so the release page always
+    # offers exactly ONE apk — the newest. Without this, old zen-r*.apk assets pile
+    # up on the same release and it's easy to tap a stale one.
+    - name: Reset latest release
+      if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release delete latest --cleanup-tag -y || true
+
     - name: Publish to Release
       if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
