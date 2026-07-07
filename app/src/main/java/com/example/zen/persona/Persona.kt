@@ -9,39 +9,27 @@ enum class Persona(
     val id: String,
     val displayName: String,
     /** One-line pitch shown in the persona chooser. */
-    val tagline: String,
-    /** Short status badge shown on the dashboard, e.g. "GOBLIN MODE ACTIVE". */
-    val statusBadge: String,
-    /** Emoji used as the persona's avatar / shield glyph. */
-    val glyph: String
+    val tagline: String
 ) {
     GOBLIN(
         id = "GOBLIN",
         displayName = "The Goblin",
-        tagline = "Dark, sarcastic, and weirdly motivating. Roasts you off the feed.",
-        statusBadge = "GOBLIN MODE ACTIVE",
-        glyph = "👺" // ogre
+        tagline = "Dark, sarcastic, and weirdly motivating. Roasts you off the feed."
     ),
     COACH(
         id = "COACH",
         displayName = "The Coach",
-        tagline = "High-energy hype to get you off the feed and into the real game.",
-        statusBadge = "COACH MODE — TRAINING",
-        glyph = "💪" // flexed biceps
+        tagline = "High-energy hype to get you off the feed and into the real game."
     ),
     ZEN(
         id = "ZEN",
         displayName = "Zen",
-        tagline = "Calm, quiet, and gently uncompromising.",
-        statusBadge = "ZEN MODE",
-        glyph = "🪷" // lotus
+        tagline = "Calm, quiet, and gently uncompromising."
     ),
     SAGE(
         id = "SAGE",
         displayName = "The Sage",
-        tagline = "An old philosopher who is mildly disappointed in you.",
-        statusBadge = "THE SAGE IS WATCHING",
-        glyph = "🏺" // amphora
+        tagline = "An old philosopher who is mildly disappointed in you."
     );
 
     companion object {

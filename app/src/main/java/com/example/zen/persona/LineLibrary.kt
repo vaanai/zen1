@@ -7,6 +7,14 @@ import kotlin.random.Random
  *
  * Block lines escalate by "tier", derived from how many times the user has been intercepted today
  * (their relapse count): the persona gets sharper / more pointed the more you come back.
+ *
+ * ## Tone rules ("funny words on a serious canvas")
+ * 1. Humor lives ONLY in headline slots (block lines, welcome, override asides). Buttons,
+ *    permissions, settings, and data labels are always plain product English.
+ * 2. Block lines: one idea, ≤ 12 words, deadpan over exclamatory. No emoji, ever.
+ * 3. Escalation sharpens wit; it never attacks the person — tease the behavior, not the ability.
+ * 4. Voices: GOBLIN deadpan sarcasm · COACH tough-love imperatives, zero irony ·
+ *    ZEN never jokes, spare and concrete · SAGE literate, dry, mildly disappointed.
  */
 object LineLibrary {
 
@@ -25,21 +33,21 @@ object LineLibrary {
     }
 
     fun shieldTitle(persona: Persona): String = when (persona) {
-        Persona.GOBLIN -> "Dopamine Goblin Shield"
-        Persona.COACH -> "Focus Training Mode"
-        Persona.ZEN -> "Stillness Guard"
-        Persona.SAGE -> "The Examined Feed"
+        Persona.GOBLIN -> "The Goblin is on duty"
+        Persona.COACH -> "The Coach is on the clock"
+        Persona.ZEN -> "Zen is keeping watch"
+        Persona.SAGE -> "The Sage is observing"
     }
 
     fun shieldDescription(persona: Persona): String = when (persona) {
         Persona.GOBLIN ->
-            "Try to scroll a short-form feed and I'll roast you and bounce you straight back out."
+            "Short-form feeds get intercepted. You get roasted, briefly, on the way out."
         Persona.COACH ->
-            "Catch yourself reaching for the feed and I'll redirect that energy somewhere useful."
+            "Open a feed and you'll get pulled off the bench and back into the game."
         Persona.ZEN ->
-            "When the pull to scroll arises, I'll meet it with one calm breath and ease you away."
+            "When the pull to scroll arises, it will be met quietly, and you will be eased away."
         Persona.SAGE ->
-            "Should you attempt an idle scroll, I shall intervene with a small, deserved lecture."
+            "Idle scrolling will be met with a small, deserved lecture."
     }
 
     /** Label for the dashboard's headline metric. */

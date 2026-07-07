@@ -35,9 +35,9 @@ object PersonaPalette {
         Persona.SAGE -> Sage
     }
 
-    // Goblin — the original "cosmic" dark/neon look.
+    // Goblin — the original "cosmic" dark/neon look. Ramp kept tight: atmosphere, not a wash.
     private val Goblin = PersonaColors(
-        gradient = listOf(Color(0xFF07050E), Color(0xFF0D0B21), Color(0xFF1E113E)),
+        gradient = listOf(Color(0xFF07050E), Color(0xFF0B091B), Color(0xFF141030)),
         accent = Color(0xFF8B5CF6),          // neon violet
         accentSecondary = Color(0xFF06B6D4), // cyber cyan
         danger = Color(0xFFEF4444),
@@ -51,9 +51,9 @@ object PersonaPalette {
         isLight = false
     )
 
-    // Coach — dark athletic base, electric lime + energetic orange.
+    // Coach — dark athletic base, electric lime + energetic orange. Tight ramp (see Goblin).
     private val Coach = PersonaColors(
-        gradient = listOf(Color(0xFF0A0F0A), Color(0xFF11210C), Color(0xFF1A2E10)),
+        gradient = listOf(Color(0xFF0A0F0A), Color(0xFF0E1A0A), Color(0xFF13200D)),
         accent = Color(0xFFB6FF3C),          // electric lime
         accentSecondary = Color(0xFFFF6B35), // energetic orange
         danger = Color(0xFFFF4D4D),

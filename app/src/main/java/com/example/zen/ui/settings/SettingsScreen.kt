@@ -23,15 +23,15 @@ import com.example.zen.data.KnownApps
 import com.example.zen.data.ZenPrefs
 import com.example.zen.persona.LocalPersonaColors
 import com.example.zen.persona.Persona
+import com.example.zen.persona.PersonaPalette
 import com.example.zen.ui.components.GlassCard
-import com.example.zen.ui.components.LocalHazeState
+import com.example.zen.ui.components.PersonaBackdrop
+import com.example.zen.ui.components.PersonaMark
 import com.example.zen.ui.components.PrimaryButton
 import com.example.zen.ui.components.SecondaryButton
 import com.example.zen.ui.components.SectionHeader
 import com.example.zen.ui.design.ZenRadius
 import com.example.zen.ui.design.ZenSpacing
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.delay
 
 @Composable
@@ -53,39 +53,31 @@ fun SettingsScreen(
         }
     }
     val unlocked = remember(tick) { prefs.isUnlocked() }
-    val hazeState = rememberHazeState()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(c.gradient))
-            .hazeSource(hazeState)
-    ) {
-        CompositionLocalProvider(LocalHazeState provides hazeState) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = ZenSpacing.md, vertical = ZenSpacing.sm),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = c.textPrimary)
-                    }
-                    Text("Settings", style = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 0.sp), color = c.textPrimary)
+    PersonaBackdrop {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = ZenSpacing.md, vertical = ZenSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = c.textPrimary)
                 }
+                Text("Settings", style = MaterialTheme.typography.headlineSmall, color = c.textPrimary)
+            }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = ZenSpacing.screenGutter)
-                ) {
-                    if (!unlocked) LockGate(prefs, tick) else UnlockedSettings(prefs, selectedPersona, onPersonaSelected)
-                    Spacer(Modifier.height(ZenSpacing.xl))
-                    VersionFooter(onOpenDebug = onOpenDebug)
-                    Spacer(Modifier.height(ZenSpacing.xxl))
-                }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = ZenSpacing.screenGutter)
+            ) {
+                if (!unlocked) LockGate(prefs, tick) else UnlockedSettings(prefs, selectedPersona, onPersonaSelected)
+                Spacer(Modifier.height(ZenSpacing.xl))
+                VersionFooter(onOpenDebug = onOpenDebug)
+                Spacer(Modifier.height(ZenSpacing.xxl))
             }
         }
     }
@@ -119,7 +111,11 @@ private fun LockGate(prefs: ZenPrefs, tick: Int) {
             Spacer(Modifier.height(ZenSpacing.xl))
 
             if (cooldownPending) {
-                Text("Unlocking in ${formatMs(remaining)}", style = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 0.sp), color = c.accent)
+                Text(
+                    "Unlocking in ${formatMs(remaining)}",
+                    style = MaterialTheme.typography.headlineSmall.copy(fontFeatureSettings = "tnum"),
+                    color = c.accent
+                )
                 Spacer(Modifier.height(ZenSpacing.xs))
                 Text("Stay on this screen — it'll open automatically.", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
                 Spacer(Modifier.height(ZenSpacing.md))
@@ -184,67 +180,87 @@ private fun UnlockedSettings(
 
     Spacer(Modifier.height(ZenSpacing.sm))
     SectionHeader("Persona")
-    Persona.entries.forEach { p ->
-        val isSel = p == selectedPersona
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = ZenSpacing.xs)
-                .clickable { prefs.persona = p; onPersonaSelected(p) },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(p.glyph, style = TextStyle(fontFamily = FontFamily.Default, fontSize = 20.sp))
-            Spacer(Modifier.width(ZenSpacing.md))
-            Text(p.displayName, style = MaterialTheme.typography.bodyLarge, color = c.textPrimary, modifier = Modifier.weight(1f))
-            if (isSel) Icon(Icons.Default.CheckCircle, "Selected", tint = c.accent)
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Persona.entries.forEachIndexed { index, p ->
+                val isSel = p == selectedPersona
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { prefs.persona = p; onPersonaSelected(p) }
+                        .padding(vertical = ZenSpacing.sm),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    PersonaMark(persona = p, size = 20.dp, color = PersonaPalette.of(p).accent)
+                    Spacer(Modifier.width(ZenSpacing.md))
+                    Text(p.displayName, style = MaterialTheme.typography.bodyLarge, color = c.textPrimary, modifier = Modifier.weight(1f))
+                    if (isSel) Icon(Icons.Default.CheckCircle, "Selected", tint = c.accent)
+                }
+                if (index < Persona.entries.lastIndex) HairlineDivider()
+            }
         }
     }
 
     Spacer(Modifier.height(ZenSpacing.xl))
     SectionHeader("Guarded apps")
-    KnownApps.apps.forEach { app ->
-        ToggleRow(app.name, null, app.name in selectedApps) { on ->
-            if (on) selectedApps.add(app.name) else selectedApps.remove(app.name)
-            writeApps()
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            KnownApps.apps.forEachIndexed { index, app ->
+                ToggleRow(app.name, null, app.name in selectedApps) { on ->
+                    if (on) selectedApps.add(app.name) else selectedApps.remove(app.name)
+                    writeApps()
+                }
+                if (index < KnownApps.apps.lastIndex) HairlineDivider()
+            }
         }
     }
 
     Spacer(Modifier.height(ZenSpacing.xl))
     SectionHeader("Blocking")
-    ToggleRow(
-        "Friend Pass",
-        "Allow the one video a friend DM'd you; block the next scroll.",
-        friendPass
-    ) { friendPass = it; prefs.friendPassEnabled = it }
-    Spacer(Modifier.height(ZenSpacing.md))
-    Text(
-        if (allowedScrolls.toInt() == 0) "Strictness: block the moment you open a feed"
-        else "Strictness: allow ${allowedScrolls.toInt()} scroll(s) before blocking",
-        style = MaterialTheme.typography.titleMedium, color = c.textPrimary
-    )
-    Slider(
-        value = allowedScrolls,
-        onValueChange = { allowedScrolls = it; prefs.allowedScrolls = it.toInt() },
-        valueRange = 0f..5f,
-        steps = 4,
-        colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent)
-    )
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            ToggleRow(
+                "Friend Pass",
+                "Allow the one video a friend DM'd you; block the next scroll.",
+                friendPass
+            ) { friendPass = it; prefs.friendPassEnabled = it }
+            HairlineDivider()
+            Spacer(Modifier.height(ZenSpacing.md))
+            Text(
+                if (allowedScrolls.toInt() == 0) "Intervene the moment you open a feed"
+                else "Allow ${allowedScrolls.toInt()} scroll(s) before intervening",
+                style = MaterialTheme.typography.titleMedium, color = c.textPrimary
+            )
+            Slider(
+                value = allowedScrolls,
+                onValueChange = { allowedScrolls = it; prefs.allowedScrolls = it.toInt() },
+                valueRange = 0f..5f,
+                steps = 4,
+                colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent)
+            )
+        }
+    }
 
-    Spacer(Modifier.height(ZenSpacing.sm))
+    Spacer(Modifier.height(ZenSpacing.xl))
     SectionHeader("Goals")
-    Text("Daily screen-time goal: ${dailyCap.toInt()} min", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
-    Slider(
-        value = dailyCap,
-        onValueChange = { dailyCap = it; prefs.dailyCapMinutes = it.toInt() },
-        valueRange = 15f..240f,
-        steps = 14,
-        colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent)
-    )
-    ToggleRow(
-        "Lenient mode",
-        "Give yourself a little extra grace before a block kicks in, instead of an outright wall. Off = strict.",
-        earned
-    ) { earned = it; prefs.earnedScrollsEnabled = it }
+    GlassCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Text("Daily screen-time goal: ${dailyCap.toInt()} min", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
+            Slider(
+                value = dailyCap,
+                onValueChange = { dailyCap = it; prefs.dailyCapMinutes = it.toInt() },
+                valueRange = 15f..240f,
+                steps = 14,
+                colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent)
+            )
+            HairlineDivider()
+            ToggleRow(
+                "Lenient mode",
+                "Give yourself a little extra grace before an intervention, instead of an outright wall. Off = strict.",
+                earned
+            ) { earned = it; prefs.earnedScrollsEnabled = it }
+        }
+    }
 
     Spacer(Modifier.height(ZenSpacing.xl))
     SectionHeader("Commitment lock")
@@ -308,6 +324,18 @@ private fun VersionFooter(onOpenDebug: () -> Unit) {
                 }
             }
             .padding(vertical = ZenSpacing.sm)
+    )
+}
+
+/** 1dp low-alpha divider between rows inside a sectioned card. */
+@Composable
+private fun HairlineDivider() {
+    val c = LocalPersonaColors.current
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(c.textPrimary.copy(alpha = 0.06f))
     )
 }
 

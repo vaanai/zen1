@@ -28,14 +28,14 @@ import com.example.zen.data.ZenPrefs
 import com.example.zen.persona.LineLibrary
 import com.example.zen.persona.LocalPersonaColors
 import com.example.zen.persona.Persona
+import com.example.zen.persona.PersonaPalette
 import com.example.zen.ui.components.GlassCard
-import com.example.zen.ui.components.LocalHazeState
+import com.example.zen.ui.components.PersonaBackdrop
+import com.example.zen.ui.components.PersonaMark
 import com.example.zen.ui.components.PrimaryButton
 import com.example.zen.ui.components.SecondaryButton
 import com.example.zen.ui.design.ZenRadius
 import com.example.zen.ui.design.ZenSpacing
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
 
 @Composable
 fun OnboardingScreen(
@@ -60,35 +60,14 @@ fun OnboardingScreen(
     var password by rememberSaveable { mutableStateOf("") }
 
     val totalSteps = 4
-    val hazeState = rememberHazeState()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(c.gradient))
-            .hazeSource(hazeState)
-    ) {
-        CompositionLocalProvider(LocalHazeState provides hazeState) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(ZenSpacing.screenGutter)
-            ) {
-                Text(
-                    text = "Step ${step + 1} of $totalSteps".uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = c.textSecondary
-                )
-                Spacer(Modifier.height(ZenSpacing.sm))
-                LinearProgressIndicator(
-                    progress = { (step + 1) / totalSteps.toFloat() },
-                    color = c.accent,
-                    trackColor = c.textPrimary.copy(alpha = 0.08f),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(ZenRadius.pill)
-                )
+    PersonaBackdrop {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(ZenSpacing.screenGutter)
+        ) {
+                StepSegments(current = step, total = totalSteps)
                 Spacer(Modifier.height(ZenSpacing.xl))
 
                 Box(modifier = Modifier.weight(1f)) {
@@ -132,7 +111,6 @@ fun OnboardingScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
-            }
         }
     }
 }
@@ -158,10 +136,30 @@ private fun commit(
     prefs.lockNow()
 }
 
+/** Quiet progress: four 2dp segments, filled up to the current step. */
+@Composable
+private fun StepSegments(current: Int, total: Int) {
+    val c = LocalPersonaColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(ZenSpacing.sm)
+    ) {
+        repeat(total) { i ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(2.dp)
+                    .clip(ZenRadius.pill)
+                    .background(if (i <= current) c.accent else c.textPrimary.copy(alpha = 0.08f))
+            )
+        }
+    }
+}
+
 @Composable
 private fun StepTitle(title: String, subtitle: String? = null) {
     val c = LocalPersonaColors.current
-    Text(title, style = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 0.sp), color = c.textPrimary)
+    Text(title, style = MaterialTheme.typography.headlineSmall, color = c.textPrimary)
     if (subtitle != null) {
         Spacer(Modifier.height(ZenSpacing.sm))
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
@@ -177,36 +175,54 @@ private fun StepPersona(selected: Persona, onSelect: (Persona) -> Unit) {
             "Choose your guardian",
             "This sets the whole vibe — colors, tone, and how it talks you off the feed. Change it anytime."
         )
+        // Each card is rendered in its OWN palette: choosing a persona is choosing a theme,
+        // so the picker shows the design system instead of describing it.
         Persona.entries.forEach { p ->
+            val pc = PersonaPalette.of(p)
             val isSel = p == selected
             val source = remember { MutableInteractionSource() }
-            GlassCard(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = ZenSpacing.md)
                     .clip(ZenRadius.card)
-                    .then(
-                        if (isSel) Modifier.border(2.dp, c.accent, ZenRadius.card) else Modifier
+                    .background(pc.gradient[1])
+                    .border(
+                        width = if (isSel) 1.5.dp else 1.dp,
+                        color = if (isSel) c.accent else pc.cardBorder,
+                        shape = ZenRadius.card
                     )
                     .clickable(interactionSource = source, indication = null) { onSelect(p) }
+                    .padding(ZenSpacing.cardPadding),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(p.glyph, style = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Default, fontSize = 28.sp))
-                    Spacer(Modifier.width(ZenSpacing.lg))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(p.displayName, style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
-                        Text(p.tagline, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
-                    }
-                    if (isSel) Icon(Icons.Default.CheckCircle, "Selected", tint = c.accent)
+                PersonaMark(persona = p, size = 28.dp, color = pc.accent)
+                Spacer(Modifier.width(ZenSpacing.lg))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(p.displayName, style = MaterialTheme.typography.titleMedium, color = pc.textPrimary)
+                    Text(p.tagline, style = MaterialTheme.typography.bodySmall, color = pc.textSecondary)
                 }
+                if (isSel) Icon(Icons.Default.CheckCircle, "Selected", tint = pc.accent)
             }
         }
-        Spacer(Modifier.height(ZenSpacing.sm))
-        Text(
-            LineLibrary.welcome(selected),
-            style = MaterialTheme.typography.bodyMedium,
-            color = c.accent
-        )
+        Spacer(Modifier.height(ZenSpacing.md))
+        // The selected persona introduces itself — set as a quote, not a toast.
+        Row {
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .height(40.dp)
+                    .clip(ZenRadius.pill)
+                    .background(c.accent)
+            )
+            Spacer(Modifier.width(ZenSpacing.md))
+            Text(
+                LineLibrary.welcome(selected),
+                style = MaterialTheme.typography.bodyLarge,
+                color = c.textPrimary,
+                modifier = Modifier.align(Alignment.CenterVertically)
+            )
+        }
     }
 }
 
@@ -234,6 +250,12 @@ private fun StepPermissions(
             desc = "Lets Zen show your screen-time stats. Optional, but the dashboard is nicer with it.",
             granted = isUsageEnabled,
             onClick = onOpenUsage
+        )
+        Spacer(Modifier.height(ZenSpacing.lg))
+        Text(
+            "Everything stays on this device. Zen has no servers.",
+            style = MaterialTheme.typography.labelSmall,
+            color = LocalPersonaColors.current.textSecondary
         )
     }
 }
@@ -324,9 +346,9 @@ private fun StepLock(password: String, onPasswordChange: (String) -> Unit) {
     val c = LocalPersonaColors.current
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         StepTitle(
-            "Lock in your commitment",
-            "Set a ${ZenPrefs.PASSWORD_LENGTH}-character password to protect your settings from your future weak-willed self. " +
-                "Forget it? You can still change settings — but only after a 2-minute cooldown. Skipping the password keeps the cooldown as your lock."
+            "Make it cost something",
+            "A ${ZenPrefs.PASSWORD_LENGTH}-character password guards your settings from your future weaker self. " +
+                "Forgot it, or skipped it? Settings still open — after a 2-minute cooldown."
         )
         OutlinedTextField(
             value = password,

@@ -3,23 +3,21 @@ package com.example.zen.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.zen.persona.LocalPersonaColors
+import com.example.zen.ui.design.ZenElevation
 import com.example.zen.ui.design.ZenRadius
 import com.example.zen.ui.design.ZenSpacing
 import dev.chrisbanes.haze.HazeState
@@ -50,10 +48,24 @@ fun GlassCard(
 ) {
     val c = LocalPersonaColors.current
     val haze = LocalHazeState.current
-    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "cardPress")
+    // 1.5% press shrink: tactile without being cartoonish on a full-width card.
+    val scale by animateFloatAsState(if (pressed) 0.985f else 1f, label = "cardPress")
 
     val glass = Modifier
         .scale(scale)
+        .then(
+            if (c.isLight) {
+                // Light personas separate from the parchment with a soft ambient shadow.
+                Modifier.shadow(
+                    elevation = ZenElevation.ambient / 2,
+                    shape = shape,
+                    ambientColor = c.textPrimary.copy(alpha = 0.35f),
+                    spotColor = c.textPrimary.copy(alpha = 0.25f)
+                )
+            } else {
+                Modifier
+            }
+        )
         .clip(shape)
         .then(
             if (haze != null) {
@@ -70,29 +82,28 @@ fun GlassCard(
                 Modifier.background(c.cardBackground)
             }
         )
-        .border(1.dp, topLitBorder(), shape)
+        .border(ZenElevation.hairline, cardBorder(), shape)
 
     Box(modifier = modifier.then(glass)) {
         Box(Modifier.padding(contentPadding)) { content() }
     }
 }
 
-/** A vertical gradient border — brighter at the top edge — that reads as a lit glass rim. */
+/**
+ * Card edge treatment. Dark personas get a subtle top-lit rim (reads as glass under light);
+ * light personas get a flat hairline — a bright rim on parchment reads as a rendering artifact.
+ */
 @Composable
-private fun topLitBorder(): Brush {
+private fun cardBorder(): Brush {
     val c = LocalPersonaColors.current
-    return Brush.verticalGradient(
-        listOf(
-            c.textPrimary.copy(alpha = 0.22f),
-            c.cardBorder
+    return if (c.isLight) {
+        Brush.verticalGradient(listOf(c.cardBorder, c.cardBorder))
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                c.textPrimary.copy(alpha = 0.14f),
+                c.cardBorder
+            )
         )
-    )
-}
-
-/** Remembers a pressed-state source that a caller can hand to [GlassCard] for scale feedback. */
-@Composable
-fun rememberPressedState(): Pair<MutableInteractionSource, Boolean> {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    return source to pressed
+    }
 }

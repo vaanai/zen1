@@ -34,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -42,11 +41,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.zen.InterventionRequest
 import com.example.zen.persona.LineLibrary
 import com.example.zen.persona.LocalPersonaColors
-import com.example.zen.ui.components.PersonaSigil
+import com.example.zen.ui.components.PersonaBackdrop
+import com.example.zen.ui.components.PersonaMark
 import com.example.zen.ui.components.PrimaryButton
 import com.example.zen.ui.design.ZenSpacing
 import kotlinx.coroutines.delay
@@ -82,11 +81,7 @@ fun InterventionScreen(
         label = "interventionEnter"
     )
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(c.gradient))
-    ) {
+    PersonaBackdrop {
         Crossfade(targetState = phase, animationSpec = tween(250), label = "interventionPhase") { p ->
             when (p) {
                 Phase.INTERVENING -> InterveningContent(
@@ -123,6 +118,18 @@ private fun InterveningContent(
 ) {
     val c = LocalPersonaColors.current
 
+    // The mark draws itself in over 600ms, starting shortly after the screen lands.
+    var markShown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(100)
+        markShown = true
+    }
+    val markProgress by animateFloatAsState(
+        targetValue = if (markShown) 1f else 0f,
+        animationSpec = tween(600, easing = FastOutSlowInEasing),
+        label = "markDrawIn"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -136,7 +143,12 @@ private fun InterveningContent(
     ) {
         Spacer(Modifier.height(96.dp))
 
-        PersonaSigil(size = 64.dp, glyphSize = 34.dp)
+        PersonaMark(
+            persona = request.persona,
+            size = 64.dp,
+            strokeWidth = 3.dp,
+            progress = markProgress
+        )
 
         Spacer(Modifier.height(ZenSpacing.xl))
 
@@ -152,11 +164,7 @@ private fun InterveningContent(
         // The persona's line — the one place humor lives on this screen.
         Text(
             text = request.line,
-            style = MaterialTheme.typography.headlineSmall.copy(
-                fontSize = 28.sp,
-                lineHeight = 36.sp,
-                letterSpacing = 0.sp
-            ),
+            style = MaterialTheme.typography.headlineMedium,
             color = c.textPrimary
         )
 
@@ -286,7 +294,7 @@ private fun CenteredLine(text: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
             text = text,
-            style = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 0.sp),
+            style = MaterialTheme.typography.headlineSmall,
             color = c.textPrimary,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = ZenSpacing.xl)
