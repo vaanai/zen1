@@ -13,12 +13,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -57,17 +58,20 @@ fun AboutScreen(
     val context = LocalContext.current
 
     PersonaBackdrop {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+        ) {
+            // Back sits above the title, gutter-aligned with the content below.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = ZenSpacing.md, vertical = ZenSpacing.sm),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = ZenSpacing.sm, vertical = ZenSpacing.xs)
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = c.textPrimary)
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", tint = c.textPrimary)
                 }
-                Text("Settings", style = MaterialTheme.typography.headlineSmall, color = c.textPrimary)
             }
 
             Column(
@@ -76,6 +80,8 @@ fun AboutScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = ZenSpacing.screenGutter)
             ) {
+                Text("Settings", style = MaterialTheme.typography.headlineSmall, color = c.textPrimary)
+                Spacer(Modifier.height(ZenSpacing.lg))
                 SectionHeader("Permissions")
                 GlassCard(modifier = Modifier.fillMaxWidth()) {
                     Column {
@@ -88,7 +94,7 @@ fun AboutScreen(
                         Spacer(Modifier.height(ZenSpacing.md))
                         PermissionRow(
                             title = "Usage access",
-                            description = "Powers the screen-time stats on Today. Optional.",
+                            description = "Powers the screen-time stats on Today. Optional, but the charts miss you.",
                             granted = isUsageEnabled,
                             onClick = { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
                         )
@@ -100,7 +106,7 @@ fun AboutScreen(
                 GlassCard(modifier = Modifier.fillMaxWidth()) {
                     Column {
                         Text(
-                            "Everything stays on this device. Zen has no servers, no accounts, and no analytics.",
+                            "Everything stays on this device. Zen has no servers, no accounts, and no analytics. Frankly, it can't afford them.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = c.textPrimary
                         )

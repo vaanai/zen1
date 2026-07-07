@@ -17,7 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -33,6 +33,7 @@ import com.example.zen.persona.LocalPersonaColors
 import com.example.zen.persona.Persona
 import com.example.zen.persona.PersonaPalette
 import com.example.zen.ui.components.GlassCard
+import com.example.zen.ui.components.PageHeader
 import com.example.zen.ui.components.PersonaMark
 import com.example.zen.ui.components.PersonaSigil
 import com.example.zen.ui.components.SectionHeader
@@ -58,11 +59,9 @@ fun PersonaScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = ZenSpacing.screenGutter)
     ) {
-        Spacer(Modifier.height(ZenSpacing.xl))
-        Text("Persona", style = MaterialTheme.typography.headlineSmall, color = c.textPrimary)
-        Spacer(Modifier.height(ZenSpacing.sm))
+        PageHeader(title = "Persona")
         Text(
-            "The voice that meets you on the way into a feed — and the whole app's skin.",
+            "Who intercepts you, and what the whole app wears. They all mean well, in their own ways.",
             style = MaterialTheme.typography.bodyMedium,
             color = c.textSecondary
         )
@@ -79,8 +78,10 @@ fun PersonaScreen(
                     .clip(ZenRadius.card)
                     .background(pc.gradient[1])
                     .border(
+                        // Selection ring uses the TARGET persona's accent — the current theme's
+                        // accent around a differently-paletted card reads as a mistake.
                         width = if (isSel) 1.5.dp else 1.dp,
-                        color = if (isSel) c.accent else pc.cardBorder,
+                        color = if (isSel) pc.accent else pc.cardBorder,
                         shape = ZenRadius.card
                     )
                     .clickable(interactionSource = source, indication = null) {
@@ -96,7 +97,7 @@ fun PersonaScreen(
                     Text(p.displayName, style = MaterialTheme.typography.titleMedium, color = pc.textPrimary)
                     Text(p.tagline, style = MaterialTheme.typography.bodySmall, color = pc.textSecondary)
                 }
-                if (isSel) Icon(Icons.Default.CheckCircle, "Selected", tint = pc.accent)
+                if (isSel) Icon(Icons.Outlined.CheckCircle, "Selected", tint = pc.accent)
             }
         }
 

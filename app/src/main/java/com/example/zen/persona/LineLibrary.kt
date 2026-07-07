@@ -15,6 +15,14 @@ import kotlin.random.Random
  * 3. Escalation sharpens wit; it never attacks the person — tease the behavior, not the ability.
  * 4. Voices: GOBLIN deadpan sarcasm · COACH tough-love imperatives, zero irony ·
  *    ZEN never jokes, spare and concrete · SAGE literate, dry, mildly disappointed.
+ * 5. PRODUCT VOICE (everything that isn't a persona slot): dry, literate, mildly self-aware —
+ *    the Sage's register without the philosophy. It knows it's an app that blocks other apps,
+ *    and finds that faintly absurd. Rules: at most ONE wink per surface (a card, a step, a
+ *    screen), always in the last position — lead with the fact, land the aside. Never
+ *    exclamatory, never cutesy, never emoji. Some surfaces stay 100% plain: buttons, data
+ *    labels, error states, countdowns, the privacy paragraph body, and anything Android or
+ *    Play policy reads (accessibility disclosures). The persona voices live ONLY in the
+ *    persona slots; the product voice never impersonates them.
  */
 object LineLibrary {
 

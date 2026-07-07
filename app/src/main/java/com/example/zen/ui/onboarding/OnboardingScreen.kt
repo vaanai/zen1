@@ -2,6 +2,12 @@ package com.example.zen.ui.onboarding
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -10,7 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,6 +40,9 @@ import com.example.zen.ui.components.PersonaBackdrop
 import com.example.zen.ui.components.PersonaMark
 import com.example.zen.ui.components.PrimaryButton
 import com.example.zen.ui.components.SecondaryButton
+import com.example.zen.ui.components.ZenSlider
+import com.example.zen.ui.components.ZenSwitch
+import com.example.zen.ui.components.ZenTextField
 import com.example.zen.ui.design.ZenRadius
 import com.example.zen.ui.design.ZenSpacing
 
@@ -65,13 +74,27 @@ fun OnboardingScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .padding(ZenSpacing.screenGutter)
         ) {
                 StepSegments(current = step, total = totalSteps)
                 Spacer(Modifier.height(ZenSpacing.xl))
 
-                Box(modifier = Modifier.weight(1f)) {
-                    when (step) {
+                // Directional step transition: forward slides left, Back slides right.
+                AnimatedContent(
+                    targetState = step,
+                    transitionSpec = {
+                        val forward = targetState > initialState
+                        val enter = fadeIn(tween(220)) + slideInHorizontally(tween(220)) {
+                            if (forward) it / 8 else -it / 8
+                        }
+                        val exit = fadeOut(tween(160))
+                        enter togetherWith exit
+                    },
+                    modifier = Modifier.weight(1f),
+                    label = "onboardingStep"
+                ) { s ->
+                    when (s) {
                         0 -> StepPersona(selectedPersona, onPersonaSelected)
                         1 -> StepPermissions(
                             isAccessibilityEnabled = isAccessibilityEnabled,
@@ -86,7 +109,7 @@ fun OnboardingScreen(
                             dailyCap = dailyCap,
                             onDailyCapChange = { dailyCap = it }
                         )
-                        3 -> StepLock(password = password, onPasswordChange = { password = it })
+                        else -> StepLock(password = password, onPasswordChange = { password = it })
                     }
                 }
 
@@ -176,7 +199,7 @@ private fun StepPersona(selected: Persona, onSelect: (Persona) -> Unit) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         StepTitle(
             "Choose your guardian",
-            "This sets the whole vibe — colors, tone, and how it talks you off the feed. Change it anytime."
+            "Colors, tone, and how you'll be talked out of a feed. Change it anytime — they won't take it personally."
         )
         // Each card is rendered in its OWN palette: choosing a persona is choosing a theme,
         // so the picker shows the design system instead of describing it.
@@ -205,7 +228,7 @@ private fun StepPersona(selected: Persona, onSelect: (Persona) -> Unit) {
                     Text(p.displayName, style = MaterialTheme.typography.titleMedium, color = pc.textPrimary)
                     Text(p.tagline, style = MaterialTheme.typography.bodySmall, color = pc.textSecondary)
                 }
-                if (isSel) Icon(Icons.Default.CheckCircle, "Selected", tint = pc.accent)
+                if (isSel) Icon(Icons.Outlined.CheckCircle, "Selected", tint = pc.accent)
             }
         }
         Spacer(Modifier.height(ZenSpacing.md))
@@ -239,7 +262,7 @@ private fun StepPermissions(
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         StepTitle(
             "Grant access",
-            "Zen needs two permissions to work. Everything stays on your device — nothing is uploaded."
+            "One permission does the work; the other draws the charts. Neither sends anything anywhere."
         )
         PermissionRow(
             title = "Accessibility Service",
@@ -250,13 +273,13 @@ private fun StepPermissions(
         Spacer(Modifier.height(ZenSpacing.md))
         PermissionRow(
             title = "Usage Access",
-            desc = "Lets Zen show your screen-time stats. Optional, but the dashboard is nicer with it.",
+            desc = "Optional. The dashboard is nicer with it, and dashboards are how this app flatters you.",
             granted = isUsageEnabled,
             onClick = onOpenUsage
         )
         Spacer(Modifier.height(ZenSpacing.lg))
         Text(
-            "Everything stays on this device. Zen has no servers.",
+            "Everything stays on this device. Zen has no servers to send it to.",
             style = MaterialTheme.typography.labelSmall,
             color = LocalPersonaColors.current.textSecondary
         )
@@ -282,7 +305,7 @@ private fun PermissionRow(title: String, desc: String, granted: Boolean, onClick
             }
             Spacer(Modifier.width(ZenSpacing.md))
             if (granted) {
-                Icon(Icons.Default.CheckCircle, "Granted", tint = c.safe)
+                Icon(Icons.Outlined.CheckCircle, "Granted", tint = c.safe)
             } else {
                 Text("Grant", style = MaterialTheme.typography.labelLarge, color = c.accent)
             }
@@ -301,45 +324,45 @@ private fun StepConfig(
     val c = LocalPersonaColors.current
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         StepTitle("What should I guard?")
-        KnownApps.apps.forEach { app ->
-            val checked = app.name in selectedApps
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = ZenSpacing.xs),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(app.name, style = MaterialTheme.typography.bodyLarge, color = c.textPrimary, modifier = Modifier.weight(1f))
-                Switch(
-                    checked = checked,
-                    onCheckedChange = { on -> if (on) selectedApps.add(app.name) else selectedApps.remove(app.name) },
-                    colors = SwitchDefaults.colors(checkedTrackColor = c.accent)
-                )
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Column {
+                KnownApps.apps.forEach { app ->
+                    val checked = app.name in selectedApps
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = ZenSpacing.xs),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(app.name, style = MaterialTheme.typography.bodyLarge, color = c.textPrimary, modifier = Modifier.weight(1f))
+                        ZenSwitch(
+                            checked = checked,
+                            onCheckedChange = { on -> if (on) selectedApps.add(app.name) else selectedApps.remove(app.name) }
+                        )
+                    }
+                }
             }
         }
         Spacer(Modifier.height(ZenSpacing.lg))
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Friend Pass", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
-                Text(
-                    "Allow the one video a friend sent you in DMs — block the moment you scroll past it.",
-                    style = MaterialTheme.typography.bodySmall, color = c.textSecondary
-                )
+        GlassCard(modifier = Modifier.fillMaxWidth()) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Friend Pass", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
+                    Text(
+                        "The one video a friend sends you still gets through. The second one counts as scrolling.",
+                        style = MaterialTheme.typography.bodySmall, color = c.textSecondary
+                    )
+                }
+                ZenSwitch(checked = friendPass, onCheckedChange = onFriendPassChange)
             }
-            Switch(
-                checked = friendPass,
-                onCheckedChange = onFriendPassChange,
-                colors = SwitchDefaults.colors(checkedTrackColor = c.accent)
-            )
         }
         Spacer(Modifier.height(ZenSpacing.xl))
         Text("Daily screen-time goal: ${dailyCap.toInt()} min", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
-        Slider(
+        ZenSlider(
             value = dailyCap,
             onValueChange = onDailyCapChange,
             valueRange = 15f..240f,
-            steps = 14,
-            colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent)
+            snap = 15
         )
     }
 }
@@ -350,21 +373,15 @@ private fun StepLock(password: String, onPasswordChange: (String) -> Unit) {
     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         StepTitle(
             "Make it cost something",
-            "A ${ZenPrefs.PASSWORD_LENGTH}-character password guards your settings from your future weaker self. " +
-                "Forgot it, or skipped it? Settings still open — after a 2-minute cooldown."
+            "A ${ZenPrefs.PASSWORD_LENGTH}-character password guards these settings from your future, weaker self. " +
+                "Skipped it or forgot it? They still open — after a two-minute wait."
         )
-        OutlinedTextField(
+        ZenTextField(
             value = password,
             onValueChange = { if (it.length <= ZenPrefs.PASSWORD_LENGTH) onPasswordChange(it) },
-            label = { Text("Password (optional)") },
+            label = "Password (optional)",
             visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            supportingText = { Text("${password.length} / ${ZenPrefs.PASSWORD_LENGTH}") },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = c.accent,
-                focusedLabelColor = c.accent,
-                cursorColor = c.accent
-            ),
+            supportingText = "${password.length} / ${ZenPrefs.PASSWORD_LENGTH}",
             modifier = Modifier.fillMaxWidth()
         )
         if (password.isNotEmpty() && password.length != ZenPrefs.PASSWORD_LENGTH) {

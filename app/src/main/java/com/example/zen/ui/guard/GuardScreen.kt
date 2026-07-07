@@ -1,6 +1,9 @@
 package com.example.zen.ui.guard
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,15 +20,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -48,9 +49,12 @@ import com.example.zen.detection.DetectionConfigStore
 import com.example.zen.detection.ExitRoutes
 import com.example.zen.persona.LocalPersonaColors
 import com.example.zen.ui.components.GlassCard
+import com.example.zen.ui.components.PageHeader
 import com.example.zen.ui.components.PrimaryButton
 import com.example.zen.ui.components.SecondaryButton
 import com.example.zen.ui.components.SectionHeader
+import com.example.zen.ui.components.ZenSwitch
+import com.example.zen.ui.components.ZenTextField
 import com.example.zen.ui.design.ZenRadius
 import com.example.zen.ui.design.ZenSpacing
 import kotlinx.coroutines.delay
@@ -80,50 +84,63 @@ fun GuardScreen(prefs: ZenPrefs, modifier: Modifier = Modifier) {
             .verticalScroll(rememberScrollState())
             .padding(horizontal = ZenSpacing.screenGutter)
     ) {
-        Spacer(Modifier.height(ZenSpacing.xl))
-        Text("Guard", style = MaterialTheme.typography.headlineSmall, color = c.textPrimary)
-        Spacer(Modifier.height(ZenSpacing.lg))
+        PageHeader(
+            title = "Guard",
+            subtitle = if (unlocked) "UNLOCKED — CHANGES ALLOWED" else "LOCKED",
+            subtitleColor = if (unlocked) c.accent else null
+        )
 
         if (!unlocked) {
             LockGate(prefs, tick)
+            Spacer(Modifier.height(ZenSpacing.lg))
+            // The commitments stay visible while locked — read-only, not hidden. An empty
+            // locked page reads as a broken page.
+            GuardCards(prefs, editable = false)
         } else {
-            UnlockedGuardSettings(prefs)
+            GuardCards(prefs, editable = true)
+            UnlockedExtras(prefs)
         }
         Spacer(Modifier.height(ZenSpacing.xxl))
     }
 }
 
 @Composable
-private fun UnlockedGuardSettings(prefs: ZenPrefs) {
-    val c = LocalPersonaColors.current
-
+private fun GuardCards(prefs: ZenPrefs, editable: Boolean) {
     // prefs.revision is not Compose state; a local counter invalidates the derived config map
     // after every write so the cards refresh.
     var localRev by remember { mutableStateOf(0) }
     val configs = remember(localRev) { prefs.appConfigs }
-    var lenient by remember { mutableStateOf(prefs.earnedScrollsEnabled) }
 
     SectionHeader("What you block")
     KnownApps.apps.forEach { app ->
-        AppGuardCard(
-            app = app,
-            config = configs[app.key] ?: AppGuardConfig(),
-            exits = remember { exitRoutesFor(app) },
-            onChange = { transform ->
-                prefs.updateConfig(app.key, transform)
-                localRev++
-            }
-        )
+        Box(modifier = Modifier.alpha(if (editable) 1f else 0.6f)) {
+            AppGuardCard(
+                app = app,
+                config = configs[app.key] ?: AppGuardConfig(),
+                exits = remember { exitRoutesFor(app) },
+                editable = editable,
+                onChange = { transform ->
+                    prefs.updateConfig(app.key, transform)
+                    localRev++
+                }
+            )
+        }
         Spacer(Modifier.height(ZenSpacing.md))
     }
+}
+
+@Composable
+private fun UnlockedExtras(prefs: ZenPrefs) {
+    var lenient by remember { mutableStateOf(prefs.earnedScrollsEnabled) }
 
     Spacer(Modifier.height(ZenSpacing.lg))
     SectionHeader("Grace")
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         ToggleRow(
             "Lenient mode",
-            "One extra scroll of grace everywhere before an intervention. Off = strict.",
-            lenient
+            "One extra scroll of grace before an intervention. Off is strict — which is rather the point.",
+            lenient,
+            enabled = true
         ) { lenient = it; prefs.earnedScrollsEnabled = it }
     }
 
@@ -150,6 +167,7 @@ private fun AppGuardCard(
     app: GuardedApp,
     config: AppGuardConfig,
     exits: ExitRoutes,
+    editable: Boolean,
     onChange: ((AppGuardConfig) -> AppGuardConfig) -> Unit
 ) {
     val c = LocalPersonaColors.current
@@ -177,10 +195,10 @@ private fun AppGuardCard(
                     color = c.textPrimary,
                     modifier = Modifier.weight(1f)
                 )
-                Switch(
+                ZenSwitch(
                     checked = config.enabled,
-                    onCheckedChange = { on -> onChange { it.copy(enabled = on) } },
-                    colors = SwitchDefaults.colors(checkedTrackColor = c.accent)
+                    enabled = editable,
+                    onCheckedChange = { on -> onChange { it.copy(enabled = on) } }
                 )
             }
 
@@ -190,10 +208,11 @@ private fun AppGuardCard(
                 Spacer(Modifier.height(ZenSpacing.md))
 
                 StepperRow(
-                    label = if (config.scrollAllowance == 0) "Intervene the moment you open a feed"
-                    else "Allow ${config.scrollAllowance} scroll(s) first",
+                    label = "Scrolls before stepping in",
+                    caption = if (config.scrollAllowance == 0) "0 means the moment a feed opens." else null,
                     value = config.scrollAllowance,
                     range = 0..5,
+                    enabled = editable,
                     onValue = { v -> onChange { it.copy(scrollAllowance = v) } }
                 )
 
@@ -206,6 +225,7 @@ private fun AppGuardCard(
                 ExitPickerRow(
                     selected = config.exitAction,
                     exits = exits,
+                    enabled = editable,
                     onSelect = { action -> onChange { it.copy(exitAction = action) } }
                 )
 
@@ -213,8 +233,9 @@ private fun AppGuardCard(
                 HairlineDivider()
                 ToggleRow(
                     "Friend pass",
-                    "Allow the one video a friend sends you in DMs.",
-                    config.friendPass
+                    "The one video a friend sends you still gets through. The second one counts as scrolling.",
+                    config.friendPass,
+                    enabled = editable
                 ) { on -> onChange { it.copy(friendPass = on) } }
             }
         }
@@ -225,6 +246,7 @@ private fun AppGuardCard(
 private fun ExitPickerRow(
     selected: ExitAction,
     exits: ExitRoutes,
+    enabled: Boolean,
     onSelect: (ExitAction) -> Unit
 ) {
     val options = buildList {
@@ -240,6 +262,7 @@ private fun ExitPickerRow(
             SelectablePill(
                 text = label,
                 selected = action == effective,
+                enabled = enabled,
                 onClick = { onSelect(action) }
             )
         }
@@ -247,41 +270,60 @@ private fun ExitPickerRow(
 }
 
 @Composable
-private fun SelectablePill(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun SelectablePill(text: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val c = LocalPersonaColors.current
+    val fill by animateColorAsState(
+        targetValue = if (selected) c.accent.copy(alpha = 0.18f) else c.surfaceDim,
+        animationSpec = tween(150),
+        label = "pillFill"
+    )
+    val content by animateColorAsState(
+        targetValue = if (selected) c.accent else c.textSecondary,
+        animationSpec = tween(150),
+        label = "pillContent"
+    )
     Box(
         modifier = Modifier
             .clip(ZenRadius.pill)
-            .background(if (selected) c.accent.copy(alpha = 0.18f) else c.textPrimary.copy(alpha = 0.05f))
-            .clickable { onClick() }
+            .background(fill)
+            .border(1.dp, if (selected) c.accent else c.cardBorder, ZenRadius.pill)
+            .clickable(enabled = enabled) { onClick() }
             .padding(horizontal = ZenSpacing.md, vertical = ZenSpacing.sm)
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (selected) c.accent else c.textSecondary
-        )
+        Text(text = text, style = MaterialTheme.typography.labelLarge, color = content)
     }
 }
 
 @Composable
-private fun StepperRow(label: String, value: Int, range: IntRange, onValue: (Int) -> Unit) {
+private fun StepperRow(
+    label: String,
+    caption: String?,
+    value: Int,
+    range: IntRange,
+    enabled: Boolean,
+    onValue: (Int) -> Unit
+) {
     val c = LocalPersonaColors.current
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = c.textPrimary,
-            modifier = Modifier.weight(1f)
-        )
-        StepperButton("−", enabled = value > range.first) { onValue((value - 1).coerceIn(range)) }
-        Text(
-            "$value",
-            style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-            color = c.textPrimary,
-            modifier = Modifier.padding(horizontal = ZenSpacing.md)
-        )
-        StepperButton("+", enabled = value < range.last) { onValue((value + 1).coerceIn(range)) }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.textPrimary,
+                modifier = Modifier.weight(1f)
+            )
+            StepperButton("−", enabled = enabled && value > range.first) { onValue((value - 1).coerceIn(range)) }
+            Text(
+                "$value",
+                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                color = c.textPrimary,
+                modifier = Modifier.padding(horizontal = ZenSpacing.md)
+            )
+            StepperButton("+", enabled = enabled && value < range.last) { onValue((value + 1).coerceIn(range)) }
+        }
+        if (caption != null) {
+            Text(caption, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+        }
     }
 }
 
@@ -290,9 +332,10 @@ private fun StepperButton(glyph: String, enabled: Boolean, onClick: () -> Unit) 
     val c = LocalPersonaColors.current
     Box(
         modifier = Modifier
+            .minimumInteractiveComponentSize()
             .size(32.dp)
             .clip(CircleShape)
-            .background(c.textPrimary.copy(alpha = if (enabled) 0.08f else 0.03f))
+            .background(if (enabled) c.surfaceDim else c.surfaceDim.copy(alpha = c.surfaceDim.alpha * 0.4f))
             .clickable(enabled = enabled) { onClick() },
         contentAlignment = Alignment.Center
     ) {
@@ -305,7 +348,13 @@ private fun StepperButton(glyph: String, enabled: Boolean, onClick: () -> Unit) 
 }
 
 @Composable
-private fun ToggleRow(title: String, desc: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun ToggleRow(
+    title: String,
+    desc: String?,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit
+) {
     val c = LocalPersonaColors.current
     Row(
         modifier = Modifier
@@ -317,15 +366,11 @@ private fun ToggleRow(title: String, desc: String?, checked: Boolean, onChange: 
             Text(title, style = MaterialTheme.typography.bodyLarge, color = c.textPrimary)
             if (desc != null) Text(desc, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = onChange,
-            colors = SwitchDefaults.colors(checkedTrackColor = c.accent)
-        )
+        ZenSwitch(checked = checked, enabled = enabled, onCheckedChange = onChange)
     }
 }
 
-/** 1dp low-alpha divider between rows inside a sectioned card. */
+/** 1dp divider between rows inside a sectioned card. */
 @Composable
 private fun HairlineDivider() {
     val c = LocalPersonaColors.current
@@ -333,7 +378,7 @@ private fun HairlineDivider() {
         modifier = Modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(c.textPrimary.copy(alpha = 0.06f))
+            .background(c.hairline)
     )
 }
 
@@ -344,21 +389,17 @@ private fun PasswordManagement(prefs: ZenPrefs) {
     var showPassword by remember { mutableStateOf(false) }
 
     Column {
-        OutlinedTextField(
+        ZenTextField(
             value = newPassword,
             onValueChange = { if (it.length <= ZenPrefs.PASSWORD_LENGTH) newPassword = it },
-            label = { Text("Password (${ZenPrefs.PASSWORD_LENGTH} chars, blank = none)") },
+            label = "Password (exactly ${ZenPrefs.PASSWORD_LENGTH} characters — blank for none)",
             visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-            singleLine = true,
-            supportingText = { Text("${newPassword.length} / ${ZenPrefs.PASSWORD_LENGTH}") },
+            supportingText = "${newPassword.length} / ${ZenPrefs.PASSWORD_LENGTH}",
             trailingIcon = {
                 TextButton(onClick = { showPassword = !showPassword }) {
                     Text(if (showPassword) "Hide" else "Show", color = c.accent, style = MaterialTheme.typography.labelSmall)
                 }
             },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = c.accent, focusedLabelColor = c.accent, cursorColor = c.accent
-            ),
             modifier = Modifier.fillMaxWidth()
         )
         PrimaryButton(
@@ -393,12 +434,12 @@ fun LockGate(prefs: ZenPrefs, tick: Int) {
         contentPadding = ZenSpacing.xl
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Lock, null, tint = c.accent, modifier = Modifier.size(40.dp))
+            Icon(Icons.Outlined.Lock, null, tint = c.accent, modifier = Modifier.size(40.dp))
             Spacer(Modifier.height(ZenSpacing.md))
             Text("Settings are locked", style = MaterialTheme.typography.titleSmall, color = c.textPrimary)
             Spacer(Modifier.height(ZenSpacing.sm))
             Text(
-                "You committed to this on purpose. Changing it should take a moment of intention.",
+                "You locked these on purpose. Present-you doesn't get to overrule that on a whim.",
                 style = MaterialTheme.typography.bodyMedium, color = c.textSecondary,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -411,21 +452,17 @@ fun LockGate(prefs: ZenPrefs, tick: Int) {
                     color = c.accent
                 )
                 Spacer(Modifier.height(ZenSpacing.xs))
-                Text("Stay on this screen — it'll open automatically.", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+                Text("Stay on this screen. Consider it a very short meditation.", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
                 Spacer(Modifier.height(ZenSpacing.md))
                 TextButton(onClick = { prefs.cancelCooldown() }) { Text("Cancel", color = c.textSecondary) }
             } else {
                 if (prefs.hasPassword()) {
-                    OutlinedTextField(
+                    ZenTextField(
                         value = attempt,
                         onValueChange = { attempt = it; error = false },
-                        label = { Text("Enter password") },
+                        label = "Enter password",
                         visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
                         isError = error,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = c.accent, focusedLabelColor = c.accent, cursorColor = c.accent
-                        ),
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (error) Text("Wrong password.", style = MaterialTheme.typography.bodySmall, color = c.danger)
@@ -437,7 +474,7 @@ fun LockGate(prefs: ZenPrefs, tick: Int) {
                     }
                 } else {
                     Text(
-                        "No password set — unlocking just takes a 2-minute wait.",
+                        "No password set. Unlocking costs two minutes of waiting — the app's entire currency.",
                         style = MaterialTheme.typography.bodyMedium, color = c.textSecondary
                     )
                     Spacer(Modifier.height(ZenSpacing.md))

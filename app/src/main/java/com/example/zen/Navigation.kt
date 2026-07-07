@@ -7,17 +7,19 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
@@ -63,14 +65,25 @@ fun ZenApp() {
         DetectionConfigStore.refreshFromRemote(context.applicationContext)
     }
 
+    // Status/nav bar icon contrast follows the PERSONA, not the system dark-mode setting —
+    // otherwise light personas (Zen/Sage) get invisible white status icons on parchment.
+    val view = LocalView.current
+    val personaIsLight = com.example.zen.persona.PersonaPalette.of(persona).isLight
+    SideEffect {
+        val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+        val controller = WindowCompat.getInsetsController(window, view)
+        controller.isAppearanceLightStatusBars = personaIsLight
+        controller.isAppearanceLightNavigationBars = personaIsLight
+    }
+
     PersonaTheme(persona) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             val backStack = rememberNavBackStack(if (prefs.onboardingComplete) Dashboard else Onboarding)
 
+            // Edge-to-edge: backdrops paint under the system bars; each screen insets its own
+            // content (a root safeDrawingPadding would put a visible seam at the status bar).
             androidx.compose.foundation.layout.Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .safeDrawingPadding()
+                modifier = Modifier.fillMaxSize()
             ) {
                 NavDisplay(
                     backStack = backStack,

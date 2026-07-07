@@ -14,9 +14,11 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,13 +30,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -56,9 +56,11 @@ import com.example.zen.persona.LineLibrary
 import com.example.zen.persona.LocalPersona
 import com.example.zen.persona.LocalPersonaColors
 import com.example.zen.ui.components.GlassCard
+import com.example.zen.ui.components.PageHeader
 import com.example.zen.ui.components.PersonaSigil
 import com.example.zen.ui.components.SectionHeader
 import com.example.zen.ui.components.StatChip
+import com.example.zen.ui.components.ZenSlider
 import com.example.zen.ui.design.ZenRadius
 import com.example.zen.ui.design.ZenSpacing
 
@@ -79,14 +81,23 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(horizontal = ZenSpacing.screenGutter),
             horizontalAlignment = Alignment.CenterHorizontally,
-            contentPadding = PaddingValues(top = ZenSpacing.xl, bottom = ZenSpacing.xxl)
+            contentPadding = PaddingValues(bottom = ZenSpacing.xxl)
         ) {
             item {
-                HeaderRow(
-                    personaName = persona.displayName,
-                    protectionOn = uiState.isAccessibilityEnabled,
-                    onOpenSettings = onOpenAbout
-                )
+                val c = LocalPersonaColors.current
+                PageHeader(
+                    title = "Today",
+                    subtitle = if (uiState.isAccessibilityEnabled) {
+                        "PROTECTED · ${persona.displayName.uppercase()}"
+                    } else {
+                        "PROTECTION OFF"
+                    },
+                    subtitleColor = if (uiState.isAccessibilityEnabled) c.accent else c.warn
+                ) {
+                    IconButton(onClick = onOpenAbout) {
+                        Icon(Icons.Outlined.Settings, "Settings", tint = c.textSecondary)
+                    }
+                }
             }
 
             item {
@@ -98,27 +109,39 @@ fun MainScreen(
                 )
             }
 
+            if (uiState.savesToday == 0) {
+                item {
+                    Text(
+                        text = "Nothing intercepted yet today. Either a good sign or a quiet one.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LocalPersonaColors.current.textSecondary,
+                        modifier = Modifier.padding(bottom = ZenSpacing.md)
+                    )
+                }
+            }
+
             item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = ZenSpacing.sm, bottom = ZenSpacing.xl),
+                        .padding(top = ZenSpacing.sm, bottom = ZenSpacing.xl)
+                        .height(IntrinsicSize.Min),
                     horizontalArrangement = Arrangement.spacedBy(ZenSpacing.md)
                 ) {
                     StatChip(
                         value = "${uiState.streakDays}",
                         label = "Day streak",
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                     StatChip(
                         value = "${uiState.totalTimeSpentMinutes}m",
-                        label = "Today / ${uiState.dailyCapMinutes}m",
-                        modifier = Modifier.weight(1f)
+                        label = "of ${uiState.dailyCapMinutes}m goal",
+                        modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                     StatChip(
                         value = "${uiState.savesTotal}",
-                        label = "All-time",
-                        modifier = Modifier.weight(1f)
+                        label = "All-time saves",
+                        modifier = Modifier.weight(1f).fillMaxHeight()
                     )
                 }
             }
@@ -142,11 +165,22 @@ fun MainScreen(
                 }
             }
 
-            if (uiState.isUsageAccessEnabled && uiState.appStatsList.isNotEmpty()) {
+            if (uiState.isUsageAccessEnabled) {
                 item { SectionHeader("Screen time", Modifier.padding(top = ZenSpacing.sectionGap)) }
-                items(uiState.appStatsList) { app ->
-                    AppStatsCard(app = app, capMinutes = uiState.dailyCapMinutes)
-                    Spacer(Modifier.height(ZenSpacing.sm))
+                if (uiState.appStatsList.isEmpty()) {
+                    item {
+                        Text(
+                            text = "No screen time logged yet today. Enjoy it while it lasts.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LocalPersonaColors.current.textSecondary,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                } else {
+                    items(uiState.appStatsList) { app ->
+                        AppStatsCard(app = app, capMinutes = uiState.dailyCapMinutes)
+                        Spacer(Modifier.height(ZenSpacing.sm))
+                    }
                 }
             }
 
@@ -169,41 +203,12 @@ private fun DailyGoalCard(prefs: ZenPrefs, initialCap: Int) {
                 style = MaterialTheme.typography.titleMedium,
                 color = c.textPrimary
             )
-            Slider(
+            ZenSlider(
                 value = cap,
                 onValueChange = { cap = it; prefs.dailyCapMinutes = it.toInt() },
                 valueRange = 15f..240f,
-                steps = 14,
-                colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent)
+                snap = 15
             )
-        }
-    }
-}
-
-@Composable
-private fun HeaderRow(personaName: String, protectionOn: Boolean, onOpenSettings: () -> Unit) {
-    val c = LocalPersonaColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = ZenSpacing.lg),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Zen",
-                style = MaterialTheme.typography.titleSmall,
-                color = c.textPrimary
-            )
-            Spacer(Modifier.height(ZenSpacing.xs))
-            Text(
-                text = if (protectionOn) "PROTECTED · ${personaName.uppercase()}" else "PROTECTION OFF",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (protectionOn) c.accent else c.warn
-            )
-        }
-        IconButton(onClick = onOpenSettings) {
-            Icon(Icons.Default.Settings, "Settings", tint = c.textSecondary)
         }
     }
 }
@@ -222,6 +227,11 @@ private fun HeroRing(saves: Int, spentMinutes: Long, capMinutes: Int, savesLabel
         label = "ringSweep"
     )
     val animatedSaves by animateIntAsState(saves, tween(700), label = "savesCount")
+    val arcColor by androidx.compose.animation.animateColorAsState(
+        targetValue = if (overCap) c.danger else c.accent,
+        animationSpec = tween(500),
+        label = "ringColor"
+    )
 
     Box(
         contentAlignment = Alignment.Center,
@@ -232,14 +242,14 @@ private fun HeroRing(saves: Int, spentMinutes: Long, capMinutes: Int, savesLabel
         Canvas(modifier = Modifier.fillMaxSize()) {
             val stroke = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round)
             drawArc(
-                color = c.textPrimary.copy(alpha = 0.08f),
+                color = c.surfaceDim,
                 startAngle = 0f,
                 sweepAngle = 360f,
                 useCenter = false,
                 style = stroke
             )
             drawArc(
-                color = if (overCap) c.danger else c.accent,
+                color = arcColor,
                 startAngle = -90f,
                 sweepAngle = (sweepFraction * 360f).coerceAtLeast(2f),
                 useCenter = false,
@@ -304,7 +314,7 @@ private fun SetupCard(
             if (!accessibilityGranted) {
                 SetupRow(
                     title = "Accessibility service",
-                    description = "Required — this is what detects and intercepts short-form feeds.",
+                    description = "Required. This is the part that actually stands between you and the feed.",
                     onClick = onAccessibility
                 )
             }
@@ -312,7 +322,7 @@ private fun SetupCard(
             if (!usageGranted) {
                 SetupRow(
                     title = "Usage access",
-                    description = "Optional — enables the screen-time stats on this dashboard.",
+                    description = "Optional. The dashboard is nicer with it, and dashboards are how this app flatters you.",
                     onClick = onUsage
                 )
             }
@@ -342,6 +352,8 @@ private fun SetupRow(title: String, description: String, onClick: () -> Unit) {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = c.textPrimary)
             Text(description, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
         }
+        Spacer(Modifier.width(ZenSpacing.md))
+        Text("Grant", style = MaterialTheme.typography.labelLarge, color = c.accent)
     }
 }
 
@@ -386,8 +398,10 @@ fun AppStatsCard(app: AppUsageItem, capMinutes: Int) {
             LinearProgressIndicator(
                 progress = { progress },
                 color = appColor,
-                trackColor = c.textPrimary.copy(alpha = 0.05f),
+                trackColor = c.surfaceDim,
                 strokeCap = StrokeCap.Round,
+                gapSize = 0.dp,
+                drawStopIndicator = {},
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)

@@ -21,6 +21,10 @@ data class PersonaColors(
     val textSecondary: Color,
     val cardBackground: Color,
     val cardBorder: Color,
+    /** Fill for small controls (stepper buttons, unselected pills). Tuned per palette. */
+    val surfaceDim: Color,
+    /** 1dp separators. Tuned per palette — hand-mixed alphas vanish on parchment. */
+    val hairline: Color,
     val fontFamily: FontFamily,
     /** True for light-background personas (Zen, Sage) — affects status-bar icon tint, etc. */
     val isLight: Boolean
@@ -47,6 +51,8 @@ object PersonaPalette {
         textSecondary = Color(0xFF9CA3AF),
         cardBackground = Color(0x15FFFFFF),
         cardBorder = Color(0x1CFFFFFF),
+        surfaceDim = Color(0x14FFFFFF),
+        hairline = Color(0x0FFFFFFF),
         fontFamily = InterFamily,
         isLight = false
     )
@@ -63,6 +69,8 @@ object PersonaPalette {
         textSecondary = Color(0xFFA9BE9C),
         cardBackground = Color(0x14FFFFFF),
         cardBorder = Color(0x22B6FF3C),
+        surfaceDim = Color(0x14FFFFFF),
+        hairline = Color(0x0FFFFFFF),
         fontFamily = InterFamily,
         isLight = false
     )
@@ -79,6 +87,8 @@ object PersonaPalette {
         textSecondary = Color(0xFF8A8273),
         cardBackground = Color(0x0F3A352C),
         cardBorder = Color(0x1A3A352C),
+        surfaceDim = Color(0x1A3A352C),
+        hairline = Color(0x1F3A352C),
         fontFamily = InterFamily,
         isLight = true
     )
@@ -95,6 +105,8 @@ object PersonaPalette {
         textSecondary = Color(0xFF7A6A52),
         cardBackground = Color(0x122E2519),
         cardBorder = Color(0x222E2519),
+        surfaceDim = Color(0x1A2E2519),
+        hairline = Color(0x242E2519),
         fontFamily = FrauncesFamily,
         isLight = true
     )
