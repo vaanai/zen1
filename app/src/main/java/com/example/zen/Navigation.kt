@@ -24,7 +24,9 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.example.zen.data.DefaultZenStatusProvider
 import com.example.zen.data.ZenPrefs
+import com.example.zen.detection.DetectionConfigStore
 import com.example.zen.persona.PersonaTheme
+import com.example.zen.ui.debug.DebugScreen
 import com.example.zen.ui.main.MainScreen
 import com.example.zen.ui.main.MainScreenViewModel
 import com.example.zen.ui.onboarding.OnboardingScreen
@@ -53,6 +55,12 @@ fun ZenApp() {
             usageEnabled = statusProvider.isUsageAccessEnabled()
             delay(1500)
         }
+    }
+
+    // Opportunistic detection-config refresh on app open (throttled + silent inside the store).
+    LaunchedEffect(Unit) {
+        DetectionConfigStore.init(context.applicationContext)
+        DetectionConfigStore.refreshFromRemote(context.applicationContext)
     }
 
     PersonaTheme(persona) {
@@ -102,6 +110,13 @@ fun ZenApp() {
                                 prefs = prefs,
                                 selectedPersona = persona,
                                 onPersonaSelected = setPersona,
+                                onBack = { backStack.removeLastOrNull() },
+                                onOpenDebug = { backStack.add(DebugRoute) }
+                            )
+                        }
+                        entry<DebugRoute> {
+                            DebugScreen(
+                                prefs = prefs,
                                 onBack = { backStack.removeLastOrNull() }
                             )
                         }

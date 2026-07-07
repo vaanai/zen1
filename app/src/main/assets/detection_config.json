@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "configVersion": 1,
+  "updatedAt": "2026-07-07",
+  "apps": [
+    {
+      "key": "instagram",
+      "packages": ["com.instagram.android"],
+      "strategy": "VIEW_ID",
+      "viewIds": ["clips_viewer_view_pager"],
+      "minCoverage": 0.55,
+      "requireVisible": true,
+      "classNameHints": [],
+      "negativeViewIds": []
+    },
+    {
+      "key": "youtube",
+      "packages": ["com.google.android.youtube"],
+      "strategy": "VIEW_ID",
+      "viewIds": ["reel_recycler", "reel_watch_fragment_root"],
+      "minCoverage": 0.55,
+      "requireVisible": true,
+      "classNameHints": [],
+      "negativeViewIds": []
+    },
+    {
+      "key": "tiktok",
+      "packages": ["com.zhiliaoapp.musically", "com.ss.android.ugc.trill"],
+      "strategy": "WHOLE_APP"
+    },
+    {
+      "key": "snapchat",
+      "packages": ["com.snapchat.android"],
+      "strategy": "VIEW_ID",
+      "viewIds": ["spotlight_view_pager", "spotlight_viewer"],
+      "minCoverage": 0.7,
+      "requireVisible": true,
+      "classNameHints": [],
+      "negativeViewIds": []
+    }
+  ]
+}

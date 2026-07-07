@@ -5,36 +5,12 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
-import androidx.compose.animation.core.EaseOutBack
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -46,66 +22,112 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.example.zen.persona.LocalPersonaColors
 import com.example.zen.persona.Persona
 import com.example.zen.persona.PersonaTheme
-import com.example.zen.ui.components.GlassCard
-import com.example.zen.ui.components.PersonaSigil
-import com.example.zen.ui.design.ZenSpacing
+import com.example.zen.ui.intervention.InterventionScreen
+
+/** Everything the friction screen needs to render one interception. */
+data class InterventionRequest(
+    val persona: Persona,
+    /** Escalation tier (0..2) from today's relapse count; drives copy and override hold time. */
+    val tier: Int,
+    /** The persona's line — the one humor slot on the screen. */
+    val line: String,
+    /** Display name of the intercepted app ("Instagram"), used on the Leave button. */
+    val appName: String,
+    /** Which interception of the day this is (1-based), for the factual kicker. */
+    val interceptionOrdinal: Int,
+    /** Minutes spent in the app today, or null when Usage Access isn't granted. */
+    val minutesInAppToday: Long?
+)
 
 /**
- * The themed block-interception screen, rendered with Compose inside a
- * [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY] window owned by the Accessibility Service
- * (no `SYSTEM_ALERT_WINDOW` needed). The persona "materializes" over the screen, then it
- * auto-dismisses after a short beat (the service has already backed out underneath).
- *
- * Because the overlay lives outside an Activity, we host the [ComposeView] with our own minimal
- * lifecycle / saved-state / view-model owners so Compose can run.
+ * Callbacks the friction screen routes back to the service. Dismissal is NEVER fire-and-forget:
+ * every way off the screen goes through the service's state machine, which owns navigation.
  */
-class InterceptionOverlay(private val service: AccessibilityService) {
+interface InterventionHost {
+    /** User chose to leave (Leave button, back key, or watchdog). Service navigates, then dismisses. */
+    fun onLeaveRequested()
+
+    /** User completed the hold-to-continue override. Service grants a timed pass, then dismisses. */
+    fun onOverrideCompleted()
+}
+
+/**
+ * Hosts the friction screen in a [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY] window
+ * owned by the Accessibility Service (no `SYSTEM_ALERT_WINDOW` needed).
+ *
+ * The window is focusable so it receives the back key — back means "leave", routed through
+ * [InterventionHost.onLeaveRequested] like every other exit. There is no auto-dismiss: the
+ * overlay stays up until the service confirms the escape (masking the navigation underneath)
+ * or the user leaves via the home gesture (the service sees the foreground change and calls
+ * [dismiss]).
+ *
+ * Because the overlay lives outside an Activity, the [ComposeView] gets its own minimal
+ * lifecycle / saved-state / view-model owners.
+ */
+class InterceptionOverlay(
+    private val service: AccessibilityService,
+    private val host: InterventionHost
+) {
 
     private val windowManager = service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val handler = Handler(Looper.getMainLooper())
     private var current: View? = null
-    private var host: OverlayLifecycleOwner? = null
+    private var lifecycleHost: OverlayLifecycleOwner? = null
 
-    fun show(persona: Persona, line: String) {
+    val isShowing: Boolean get() = current != null
+
+    fun show(request: InterventionRequest) {
         handler.post {
             removeNow()
 
             val lifecycleOwner = OverlayLifecycleOwner().apply { onCreate() }
             val composeView = ComposeView(service).apply {
+                setContent {
+                    PersonaTheme(request.persona) {
+                        InterventionScreen(
+                            request = request,
+                            onLeave = { host.onLeaveRequested() },
+                            onOverrideCompleted = { host.onOverrideCompleted() }
+                        )
+                    }
+                }
+            }
+            // ComposeView is final, so back-key handling lives on a wrapping FrameLayout.
+            // The view-tree owners go on the wrapper: descendants look them up the parent chain.
+            val frame = BackHandlingFrame(service) { host.onLeaveRequested() }.apply {
                 setViewTreeLifecycleOwner(lifecycleOwner)
                 setViewTreeViewModelStoreOwner(lifecycleOwner)
                 setViewTreeSavedStateRegistryOwner(lifecycleOwner)
-                setContent {
-                    PersonaTheme(persona) {
-                        BlockContent(line = line, onDismiss = { removeNow() })
-                    }
-                }
+                addView(composeView)
             }
 
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                // Focusable on purpose: the window must receive KEYCODE_BACK.
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             )
 
             try {
-                windowManager.addView(composeView, params)
+                windowManager.addView(frame, params)
                 lifecycleOwner.onResume()
-                current = composeView
-                host = lifecycleOwner
-                handler.postDelayed({ removeNow() }, DISMISS_AFTER_MS)
-            } catch (e: Exception) {
+                current = frame
+                lifecycleHost = lifecycleOwner
+            } catch (_: Exception) {
                 lifecycleOwner.onDestroy()
                 current = null
-                host = null
+                lifecycleHost = null
             }
         }
+    }
+
+    /** Called by the service once the escape is confirmed, the foreground app changed, or on destroy. */
+    fun dismiss() {
+        handler.post { removeNow() }
     }
 
     private fun removeNow() {
@@ -115,63 +137,23 @@ class InterceptionOverlay(private val service: AccessibilityService) {
             } catch (_: Exception) {
             }
         }
-        host?.onDestroy()
+        lifecycleHost?.onDestroy()
         current = null
-        host = null
-    }
-
-    companion object {
-        private const val DISMISS_AFTER_MS = 2400L
+        lifecycleHost = null
     }
 }
 
-@Composable
-private fun BlockContent(line: String, onDismiss: () -> Unit) {
-    val c = LocalPersonaColors.current
-
-    // Materialize entrance: fade + gentle scale-up on first composition.
-    var shown by remember { mutableStateOf(false) }
-    val enter by animateFloatAsState(
-        targetValue = if (shown) 1f else 0f,
-        animationSpec = tween(420, easing = EaseOutBack),
-        label = "overlayEnter"
-    )
-    androidx.compose.runtime.LaunchedEffect(Unit) { shown = true }
-
-    val interaction = remember { MutableInteractionSource() }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(c.gradient))
-            .clickable(interactionSource = interaction, indication = null) { onDismiss() },
-        contentAlignment = Alignment.Center
-    ) {
-        GlassCard(
-            modifier = Modifier
-                .padding(horizontal = ZenSpacing.xl)
-                .scale(0.92f + 0.08f * enter)
-                .alpha(enter),
-            contentPadding = ZenSpacing.xxl
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                PersonaSigil(size = 72.dp, glyphSize = 40.dp)
-                Spacer(Modifier.height(ZenSpacing.xl))
-                Text(
-                    text = line,
-                    style = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 0.sp, fontSize = 24.sp),
-                    color = c.textPrimary,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(ZenSpacing.xl))
-                Text(
-                    text = "tap to dismiss".uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = c.textSecondary,
-                    textAlign = TextAlign.Center
-                )
-            }
+/** A host view that maps the back key to "leave" instead of letting the system handle it. */
+private class BackHandlingFrame(
+    context: Context,
+    private val onBack: () -> Unit
+) : FrameLayout(context) {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP) onBack()
+            return true
         }
+        return super.dispatchKeyEvent(event)
     }
 }
 

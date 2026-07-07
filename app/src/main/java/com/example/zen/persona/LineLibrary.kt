@@ -50,10 +50,35 @@ object LineLibrary {
         Persona.SAGE -> "TEMPTATIONS RESISTED"
     }
 
-    private fun tierFor(relapseCount: Int): Int = when {
+    /** Escalation tier (0..2) for today's relapse count. Public: drives override hold time too. */
+    fun tierFor(relapseCount: Int): Int = when {
         relapseCount <= 1 -> 0
         relapseCount <= 3 -> 1
         else -> 2
+    }
+
+    /** Shown briefly (≤3 words of grace) while the service navigates out under the overlay. */
+    fun leaveAffirmation(persona: Persona): String = when (persona) {
+        Persona.GOBLIN -> "Smart move."
+        Persona.COACH -> "That's a rep."
+        Persona.ZEN -> "Well left."
+        Persona.SAGE -> "Wisdom, at last."
+    }
+
+    /** Shown while the user is holding the override — the persona watching them do it. */
+    fun overrideAside(persona: Persona): String = when (persona) {
+        Persona.GOBLIN -> "Oh, we're doing this?"
+        Persona.COACH -> "You sure about this play?"
+        Persona.ZEN -> "Notice the wanting."
+        Persona.SAGE -> "I shall pretend not to watch."
+    }
+
+    /** Shown after a completed override, before the overlay clears. */
+    fun overrideGranted(persona: Persona): String = when (persona) {
+        Persona.GOBLIN -> "Fine. Two minutes."
+        Persona.COACH -> "Short break. Then back to work."
+        Persona.ZEN -> "A little while, then."
+        Persona.SAGE -> "Even Odysseus untied himself eventually."
     }
 
     private fun blockLines(persona: Persona): Map<Int, List<String>> = when (persona) {

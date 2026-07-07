@@ -1,29 +1,44 @@
 package com.example.zen
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.example.zen.data.KnownApps
 import com.example.zen.data.ZenPrefs
+import com.example.zen.detection.Detection
+import com.example.zen.detection.DetectionConfigStore
+import com.example.zen.detection.DetectionEngine
+import com.example.zen.detection.DetectionLog
+import com.example.zen.detection.SessionStateMachine
+import com.example.zen.detection.SessionStateMachine.Action
 import com.example.zen.persona.LineLibrary
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
- * Core engine. Detects when the user is on a short-form feed in a guarded app and intercepts
- * doom-scrolling.
- *
- * Detection is behavioural (scroll count within a feed session) rather than fragile screen
- * fingerprinting:
- *  - **Direct entry** (you opened the feed yourself): block on entry, unless the user has configured
- *    a scroll allowance.
- *  - **Friend Pass** (you arrived from a DM within [FRIEND_PASS_WINDOW_MS]): the landed video is
- *    allowed; the moment you scroll to the next one, you're intercepted.
+ * Thin event router. All detection intelligence lives in [DetectionEngine] (what is on screen?)
+ * and [SessionStateMachine] (what should happen?); this class only wires accessibility events,
+ * user choices from the overlay, and scheduled re-checks into the machine, and executes the
+ * actions it returns.
  */
-class ZenAccessibilityService : AccessibilityService() {
+class ZenAccessibilityService : AccessibilityService(), InterventionHost {
 
     private val TAG = "ZenBlocker"
 
     private lateinit var prefs: ZenPrefs
+    private lateinit var engine: DetectionEngine
+    private lateinit var machine: SessionStateMachine
     private var overlay: InterceptionOverlay? = null
+    private var usageTracker: UsageTracker? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val messagingPackages = setOf(
         "com.whatsapp",
@@ -33,184 +48,209 @@ class ZenAccessibilityService : AccessibilityService() {
         "com.google.android.apps.messaging",
         "com.samsung.android.messaging"
     )
-    private val tiktokPackages = setOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")
+
+    /** Packages that emit events without representing a real foreground app switch. */
+    private val ignoredPackages = setOf("com.android.systemui")
 
     private var lastDirectMessageTime = 0L
-    private var lastBlockTime = 0L
-
-    // Current short-form "session" state.
-    private var sessionPackage: String? = null
-    private var sessionScrolls = 0
-    private var sessionFriendPass = false
-
     private var lastDumpTime = 0L
+
+    private val exitCheckRunnable = Runnable { runExitCheck() }
+    private val watchdogRunnable = Runnable {
+        execute(machine.onWatchdog(System.currentTimeMillis()))
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         prefs = ZenPrefs(applicationContext)
-        overlay = InterceptionOverlay(this)
+        DetectionConfigStore.init(applicationContext)
+        engine = DetectionEngine { DetectionConfigStore.current }
+        machine = SessionStateMachine(
+            allowanceFor = { pkg ->
+                val base = prefs.configFor(pkg).scrollAllowance
+                if (prefs.earnedScrollsEnabled) base + 1 else base
+            },
+            friendPassActive = {
+                prefs.friendPassEnabled &&
+                    System.currentTimeMillis() - lastDirectMessageTime < FRIEND_PASS_WINDOW_MS
+            }
+        )
+        overlay = InterceptionOverlay(this, host = this)
+        usageTracker = UsageTracker(applicationContext)
+
+        // Refresh detection matchers if the cached config has gone stale (silent on failure).
+        if (System.currentTimeMillis() - prefs.detectionConfigFetchedAt > DetectionConfigStore.STALE_AFTER_MS) {
+            scope.launch { DetectionConfigStore.refreshFromRemote(applicationContext) }
+        }
+
         Log.d(TAG, "Zen service connected. Guarding: ${prefs.blockedPackages}")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        val packageName = event.packageName?.toString() ?: return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == packageName || pkg in ignoredPackages) return
+        val now = System.currentTimeMillis()
 
-        if (packageName in messagingPackages) {
-            lastDirectMessageTime = System.currentTimeMillis()
+        if (pkg in messagingPackages) {
+            lastDirectMessageTime = now
         }
 
-        val guarded = prefs.blockedPackages
-        if (packageName !in guarded) {
-            resetSession()
+        if (pkg !in prefs.blockedPackages) {
+            // A real window switch to an unguarded app (launcher, messenger, …). If an
+            // intervention was up, the user escaped via home — clean up and go idle.
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                execute(machine.onForeignPackage(now))
+            }
             return
         }
 
-        if (System.currentTimeMillis() - lastBlockTime < BLOCK_COOLDOWN_MS) return
+        // While the overlay drives (intervening/exiting), regular events are irrelevant: the
+        // machine suppresses them anyway, and skipping saves the tree walk.
+        when (machine.state) {
+            is SessionStateMachine.State.Intervening,
+            is SessionStateMachine.State.Exiting -> return
+            else -> Unit
+        }
 
         val root = rootInActiveWindow
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> handleScroll(packageName, root)
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                val detection = evaluate(pkg, root, eventClassName = null)
+                logDetection(pkg, "scroll", detection)
+                execute(machine.onDetection(detection, now))
+                if (detection is Detection.ShortForm) {
+                    execute(machine.onScroll(pkg, now))
+                }
+            }
 
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                // Diagnostic: dump what this app actually exposes so we can tune detection from a
-                // real logcat (`adb logcat -s ZenScan`). Throttled so it doesn't flood.
-                maybeDumpTree(packageName, root)
-
-                if (root != null && isDirectMessageScreen(root, packageName)) {
-                    lastDirectMessageTime = System.currentTimeMillis()
+                maybeDumpTree(pkg, root)
+                if (root != null && isDirectMessageScreen(root, pkg)) {
+                    lastDirectMessageTime = now
                 }
-                if (isShortForm(packageName, root)) {
-                    enterShortForm(packageName)
-                } else {
-                    resetSession()
-                }
+                val className = event.className
+                    ?.takeIf { event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED }
+                val detection = evaluate(pkg, root, className)
+                logDetection(pkg, "window", detection)
+                execute(machine.onDetection(detection, now))
             }
         }
     }
 
-    private fun handleScroll(packageName: String, root: AccessibilityNodeInfo?) {
-        if (!isShortForm(packageName, root)) {
-            resetSession()
-            return
-        }
-        enterShortForm(packageName)
-        sessionScrolls++
-        if (sessionScrolls > currentAllowance()) {
-            block(packageName)
+    private fun evaluate(pkg: String, root: AccessibilityNodeInfo?, eventClassName: CharSequence?): Detection {
+        val metrics = resources.displayMetrics
+        return engine.evaluate(pkg, root, eventClassName, metrics.widthPixels, metrics.heightPixels)
+    }
+
+    private fun execute(actions: List<Action>) {
+        for (action in actions) {
+            when (action) {
+                is Action.ShowIntervention -> showIntervention(action)
+                Action.PressBack -> performGlobalAction(GLOBAL_ACTION_BACK)
+                Action.PressHome -> performGlobalAction(GLOBAL_ACTION_HOME)
+                Action.DismissOverlay -> {
+                    handler.removeCallbacks(watchdogRunnable)
+                    overlay?.dismiss()
+                }
+                is Action.ScheduleCheck -> {
+                    handler.removeCallbacks(exitCheckRunnable)
+                    handler.postDelayed(exitCheckRunnable, action.delayMs)
+                }
+            }
+            DetectionLog.log(
+                DetectionLog.Entry(
+                    at = System.currentTimeMillis(), pkg = "-", event = "action",
+                    state = machine.stateName, decision = action::class.simpleName ?: "?"
+                )
+            )
         }
     }
 
-    /** Begin a feed session (idempotent for the same package). */
-    private fun enterShortForm(packageName: String) {
-        if (sessionPackage == packageName) return
-        sessionPackage = packageName
-        sessionScrolls = 0
-        sessionFriendPass = prefs.friendPassEnabled &&
-            (System.currentTimeMillis() - lastDirectMessageTime < FRIEND_PASS_WINDOW_MS)
-        Log.d(TAG, "Entered short-form feed in $packageName (friendPass=$sessionFriendPass, allowance=${currentAllowance()})")
-
-        // Direct entry with no scroll allowance: block immediately on landing in the feed.
-        if (!sessionFriendPass && currentAllowance() == 0) {
-            block(packageName)
-        }
-    }
-
-    /** Scrolls permitted before blocking. Friend Pass = block on first scroll past the landed video. */
-    private fun currentAllowance(): Int {
-        if (sessionFriendPass) return 0
-        val base = prefs.allowedScrolls
-        // Optional "earned / lenient" mode grants a little extra rope.
-        return if (prefs.earnedScrollsEnabled) base + 1 else base
-    }
-
-    private fun block(packageName: String) {
-        lastBlockTime = System.currentTimeMillis()
+    private fun showIntervention(action: Action.ShowIntervention) {
         val relapseTier = prefs.recordSave()
         val persona = prefs.persona
-        val line = LineLibrary.blockLine(persona, relapseTier)
-        Log.d(TAG, "Blocked $packageName (relapse #$relapseTier): $line")
-        overlay?.show(persona, line)
-        performGlobalAction(GLOBAL_ACTION_BACK)
-        resetSession()
+        val request = InterventionRequest(
+            persona = persona,
+            tier = LineLibrary.tierFor(relapseTier),
+            line = LineLibrary.blockLine(persona, relapseTier),
+            appName = KnownApps.nameFor(action.pkg) ?: "this app",
+            interceptionOrdinal = prefs.savesToday(),
+            minutesInAppToday = minutesInAppToday(action.pkg)
+        )
+        Log.d(TAG, "Intervening in ${action.pkg} (tier=${request.tier}): ${request.line}")
+        overlay?.show(request)
+        handler.removeCallbacks(watchdogRunnable)
+        handler.postDelayed(watchdogRunnable, SessionStateMachine.WATCHDOG_MS)
     }
 
-    private fun resetSession() {
-        sessionPackage = null
-        sessionScrolls = 0
-        sessionFriendPass = false
-    }
-
-    private fun isShortForm(packageName: String, root: AccessibilityNodeInfo?): Boolean {
-        // TikTok is exclusively short-form.
-        if (packageName in tiktokPackages) return true
-        if (root == null) return false
-        return treeAnyMatch(root) { node -> matchesShortForm(packageName, node) }
-    }
-
-    /**
-     * Whether a single node identifies the *active short-form player* (not merely a nav tab).
-     *
-     * Resource-ids are the reliable discriminator: the "Reels"/"Shorts" bottom-nav tabs are present
-     * on every screen (including the home feed), so matching on the words alone would false-positive
-     * everywhere. The reel/short *viewer* exposes distinctive container ids instead. Text is only a
-     * last-resort fallback for apps whose ids are fully obfuscated (e.g. Snapchat Spotlight).
-     */
-    private fun matchesShortForm(pkg: String, node: AccessibilityNodeInfo): Boolean {
-        val id = node.viewIdResourceName?.lowercase()
-        val text = node.text?.toString()?.lowercase()
-        val desc = node.contentDescription?.toString()?.lowercase()
-        return when (pkg) {
-            "com.instagram.android" ->
-                idContains(id, "clips_viewer", "clips_video", "reel_viewer", "reel_feed")
-            "com.google.android.youtube" ->
-                idContains(id, "reel_recycler", "reel_player", "shorts_player", "reel_watch")
-            "com.snapchat.android" ->
-                idContains(id, "spotlight", "discover_feed") || anyContains(text, desc, "spotlight")
-            else -> anyContains(text, desc, "reels", "shorts", "spotlight", "for you")
+    private fun minutesInAppToday(pkg: String): Long? {
+        val tracker = usageTracker ?: return null
+        if (!tracker.isUsageAccessGranted()) return null
+        return try {
+            tracker.getDetailedUsageStats().firstOrNull { it.packageName == pkg }?.timeSpentMinutes
+        } catch (_: Exception) {
+            null
         }
     }
 
-    private fun idContains(id: String?, vararg needles: String): Boolean =
-        id != null && needles.any { id.contains(it) }
-
-    private fun anyContains(text: String?, desc: String?, vararg needles: String): Boolean =
-        (text != null && needles.any { text.contains(it) }) ||
-            (desc != null && needles.any { desc.contains(it) })
-
-    /** Depth-bounded, node-count-bounded full-tree search that short-circuits on the first match. */
-    private fun treeAnyMatch(root: AccessibilityNodeInfo, predicate: (AccessibilityNodeInfo) -> Boolean): Boolean {
-        var visited = 0
-        val stack = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
-        stack.addLast(root to 0)
-        while (stack.isNotEmpty()) {
-            val (node, depth) = stack.removeLast()
-            if (visited++ > MAX_NODES) break
-            if (predicate(node)) return true
-            if (depth < MAX_DEPTH) {
-                for (i in 0 until node.childCount) {
-                    val child = node.getChild(i) ?: continue
-                    stack.addLast(child to depth + 1)
-                }
-            }
+    /** Re-evaluation while exiting: is the screen under the overlay still short-form? */
+    private fun runExitCheck() {
+        val now = System.currentTimeMillis()
+        val exiting = machine.state as? SessionStateMachine.State.Exiting ?: return
+        val root = rootInActiveWindow
+        val currentPkg = root?.packageName?.toString()
+        val detection = if (currentPkg == exiting.pkg) {
+            evaluate(exiting.pkg, root, eventClassName = null)
+        } else {
+            Detection.NoData // left the app entirely — that counts as escaped
         }
-        return false
+        logDetection(exiting.pkg, "exitCheck", detection)
+        execute(machine.onExitCheck(detection, now))
+    }
+
+    // ---- InterventionHost (called from the overlay UI) ---------------------------------------
+
+    override fun onLeaveRequested() {
+        handler.post { execute(machine.onUserChoseLeave(System.currentTimeMillis())) }
+    }
+
+    override fun onOverrideCompleted() {
+        handler.post { execute(machine.onOverrideCompleted(System.currentTimeMillis())) }
+    }
+
+    // ---- diagnostics ---------------------------------------------------------------------------
+
+    private fun logDetection(pkg: String, event: String, detection: Detection) {
+        // Positives are always logged; negatives only while diagnostics are on (volume).
+        val interesting = detection is Detection.ShortForm || prefs.diagnosticsEnabled
+        if (!interesting) return
+        DetectionLog.log(
+            DetectionLog.Entry(
+                at = System.currentTimeMillis(),
+                pkg = pkg,
+                event = event,
+                matchedId = (detection as? Detection.ShortForm)?.matchedId,
+                coverage = (detection as? Detection.ShortForm)?.coverage,
+                state = machine.stateName,
+                decision = detection::class.simpleName ?: "?"
+            )
+        )
     }
 
     /**
-     * Logs the resource-ids / text / content-descriptions the current screen exposes, throttled to
-     * once per [DUMP_THROTTLE_MS]. This is how we learn each app's *real* ids when testing on-device:
-     * `adb logcat -s ZenScan`. Only nodes carrying an id or visible text are logged, capped in count.
+     * Verbose tree dump for on-device id discovery (`adb logcat -s ZenScan`). Gated behind the
+     * diagnostics toggle: walking 2000 nodes every 2s is a real battery cost.
      */
     private fun maybeDumpTree(packageName: String, root: AccessibilityNodeInfo?) {
-        if (root == null) return
+        if (root == null || !prefs.diagnosticsEnabled) return
         val now = System.currentTimeMillis()
         if (now - lastDumpTime < DUMP_THROTTLE_MS) return
         lastDumpTime = now
 
-        Log.d(SCAN_TAG, "--- window in $packageName (shortForm=${isShortForm(packageName, root)}) ---")
+        Log.d(SCAN_TAG, "--- window in $packageName ---")
         var visited = 0
         var logged = 0
         val stack = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
@@ -222,7 +262,7 @@ class ZenAccessibilityService : AccessibilityService() {
             val text = node.text?.toString()?.takeIf { it.isNotBlank() }
             val desc = node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
             if (id != null || text != null || desc != null) {
-                Log.d(SCAN_TAG, "id=$id text=$text desc=$desc")
+                Log.d(SCAN_TAG, "id=$id text=$text desc=$desc visible=${node.isVisibleToUser}")
                 logged++
             }
             if (depth < MAX_DEPTH) {
@@ -257,9 +297,15 @@ class ZenAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Zen service interrupted")
     }
 
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        overlay?.dismiss()
+        scope.cancel()
+        super.onDestroy()
+    }
+
     companion object {
         private const val SCAN_TAG = "ZenScan"
-        private const val BLOCK_COOLDOWN_MS = 1500L
         private const val FRIEND_PASS_WINDOW_MS = 4000L
         private const val MAX_DEPTH = 30
         private const val MAX_NODES = 2000

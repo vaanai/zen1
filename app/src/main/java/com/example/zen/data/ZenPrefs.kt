@@ -3,6 +3,9 @@ package com.example.zen.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.zen.persona.Persona
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.util.Calendar
 import java.util.Locale
 
@@ -26,6 +29,7 @@ class ZenPrefs(context: Context) : ZenStatsSource {
 
     init {
         prefs.registerOnSharedPreferenceChangeListener { _, _ -> revision++ }
+        migrateIfNeeded()
     }
 
     // ---- Settings ------------------------------------------------------------------------------
@@ -38,19 +42,111 @@ class ZenPrefs(context: Context) : ZenStatsSource {
         get() = prefs.getBoolean(KEY_ONBOARDED, false)
         set(value) = prefs.edit().putBoolean(KEY_ONBOARDED, value).apply()
 
-    /** Packages the user has chosen to guard. Defaults to all known short-form apps. */
+    // ---- Per-app guard configs -------------------------------------------------------------
+
+    /** Cached parse of the per-app config JSON; invalidated by [revision]. */
+    @Volatile private var appConfigsCache: Pair<Int, Map<String, AppGuardConfig>>? = null
+
+    /** Per-app guard settings, keyed by [GuardedApp.key]. Missing keys fall back to defaults. */
+    var appConfigs: Map<String, AppGuardConfig>
+        get() {
+            appConfigsCache?.let { (rev, map) -> if (rev == revision) return map }
+            val raw = prefs.getString(KEY_APP_CONFIGS, null)
+            val parsed: Map<String, AppGuardConfig> = if (raw == null) {
+                KnownApps.apps.associate { it.key to AppGuardConfig() }
+            } else {
+                try {
+                    json.decodeFromString<Map<String, AppGuardConfig>>(raw)
+                } catch (_: Exception) {
+                    KnownApps.apps.associate { it.key to AppGuardConfig() }
+                }
+            }
+            appConfigsCache = revision to parsed
+            return parsed
+        }
+        set(value) {
+            prefs.edit().putString(KEY_APP_CONFIGS, json.encodeToString(value)).apply()
+            appConfigsCache = null
+        }
+
+    fun configFor(pkg: String): AppGuardConfig {
+        val key = KnownApps.keyFor(pkg) ?: return AppGuardConfig()
+        return appConfigs[key] ?: AppGuardConfig()
+    }
+
+    fun updateConfig(key: String, transform: (AppGuardConfig) -> AppGuardConfig) {
+        val current = appConfigs
+        appConfigs = current + (key to transform(current[key] ?: AppGuardConfig()))
+    }
+
+    /**
+     * Packages the user has chosen to guard — a derived view over [appConfigs] so existing
+     * call sites keep working. The setter flips per-app `enabled` flags.
+     */
     var blockedPackages: Set<String>
-        get() = prefs.getStringSet(KEY_BLOCKED, DEFAULT_BLOCKED) ?: DEFAULT_BLOCKED
-        set(value) = prefs.edit().putStringSet(KEY_BLOCKED, value).apply()
+        get() = appConfigs.filterValues { it.enabled }.keys
+            .flatMap { KnownApps.byKey(it)?.packages ?: emptyList() }.toSet()
+        set(value) {
+            appConfigs = KnownApps.apps.associate { app ->
+                val existing = appConfigs[app.key] ?: AppGuardConfig()
+                app.key to existing.copy(enabled = app.packages.any { it in value })
+            }
+        }
 
     var friendPassEnabled: Boolean
         get() = prefs.getBoolean(KEY_FRIEND_PASS, true)
         set(value) = prefs.edit().putBoolean(KEY_FRIEND_PASS, value).apply()
 
-    /** Scrolls allowed on direct (non-friend-pass) entry before blocking. 0 = block on entry. */
+    /**
+     * Default scroll allowance. Kept as the "default strictness" that the global settings slider
+     * edits; writing it also applies the value to every per-app config (per-app overrides arrive
+     * with the per-app settings UI).
+     */
     var allowedScrolls: Int
-        get() = prefs.getInt(KEY_ALLOWED_SCROLLS, 0)
-        set(value) = prefs.edit().putInt(KEY_ALLOWED_SCROLLS, value.coerceIn(0, 10)).apply()
+        get() = prefs.getInt(KEY_ALLOWED_SCROLLS, AppGuardConfig.DEFAULT_ALLOWANCE)
+        set(value) {
+            val clamped = value.coerceIn(0, AppGuardConfig.MAX_ALLOWANCE)
+            prefs.edit().putInt(KEY_ALLOWED_SCROLLS, clamped).apply()
+            appConfigs = appConfigs.mapValues { (_, cfg) -> cfg.copy(scrollAllowance = clamped) }
+        }
+
+    /** Verbose accessibility-tree dumps (`adb logcat -s ZenScan`). Off by default: real battery cost. */
+    var diagnosticsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DIAGNOSTICS, false)
+        set(value) = prefs.edit().putBoolean(KEY_DIAGNOSTICS, value).apply()
+
+    // ---- Detection config store bookkeeping ------------------------------------------------
+
+    var detectionConfigVersion: Int
+        get() = prefs.getInt(KEY_CONFIG_VERSION, 0)
+        set(value) = prefs.edit().putInt(KEY_CONFIG_VERSION, value).apply()
+
+    var detectionConfigFetchedAt: Long
+        get() = prefs.getLong(KEY_CONFIG_FETCHED_AT, 0L)
+        set(value) = prefs.edit().putLong(KEY_CONFIG_FETCHED_AT, value).apply()
+
+    /**
+     * One-time migration to per-app guard configs. The legacy global allowance of 0 was the
+     * bugged v1.1 default (block-on-entry everywhere); it deliberately becomes the new default
+     * of 2 rather than carrying the broken behavior forward. Explicit non-zero values carry over.
+     */
+    private fun migrateIfNeeded() {
+        if (prefs.getBoolean(KEY_MIGRATED_V2, false)) return
+        val legacyBlocked = prefs.getStringSet(KEY_BLOCKED, null)
+        val legacyScrolls = prefs.getInt(KEY_ALLOWED_SCROLLS, 0)
+        val allowance = if (legacyScrolls > 0) legacyScrolls else AppGuardConfig.DEFAULT_ALLOWANCE
+        appConfigs = KnownApps.apps.associate { app ->
+            app.key to AppGuardConfig(
+                enabled = legacyBlocked == null || app.packages.any { it in legacyBlocked },
+                mode = GuardMode.FRICTION,
+                scrollAllowance = allowance
+            )
+        }
+        prefs.edit()
+            .putInt(KEY_ALLOWED_SCROLLS, allowance)
+            .putBoolean(KEY_MIGRATED_V2, true)
+            .apply()
+    }
 
     override var dailyCapMinutes: Int
         get() = prefs.getInt(KEY_DAILY_CAP, 60)
@@ -196,6 +292,8 @@ class ZenPrefs(context: Context) : ZenStatsSource {
         private const val COOLDOWN_MS = 2 * 60 * 1000L
         private const val UNLOCK_WINDOW_MS = 5 * 60 * 1000L
 
+        private val json = Json { ignoreUnknownKeys = true }
+
         /** Known short-form-capable apps, guarded by default. */
         val DEFAULT_BLOCKED: Set<String> = KnownApps.allPackages
 
@@ -210,6 +308,11 @@ class ZenPrefs(context: Context) : ZenStatsSource {
         private const val KEY_LOCK_PW = "lock_password"
         private const val KEY_UNLOCK_UNTIL = "unlock_until"
         private const val KEY_PENDING_UNLOCK = "pending_unlock_at"
+        private const val KEY_APP_CONFIGS = "app_guard_configs"
+        private const val KEY_MIGRATED_V2 = "prefs_migrated_v2"
+        private const val KEY_DIAGNOSTICS = "diagnostics_enabled"
+        private const val KEY_CONFIG_VERSION = "detection_config_version"
+        private const val KEY_CONFIG_FETCHED_AT = "detection_config_fetched_at"
         private const val KEY_SAVES_TOTAL = "saves_total"
         private const val KEY_SAVES_TODAY = "saves_today"
         private const val KEY_SAVES_DAY = "saves_day"

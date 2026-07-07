@@ -39,7 +39,8 @@ fun SettingsScreen(
     prefs: ZenPrefs,
     selectedPersona: Persona,
     onPersonaSelected: (Persona) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenDebug: () -> Unit = {}
 ) {
     val c = LocalPersonaColors.current
 
@@ -81,6 +82,8 @@ fun SettingsScreen(
                         .padding(horizontal = ZenSpacing.screenGutter)
                 ) {
                     if (!unlocked) LockGate(prefs, tick) else UnlockedSettings(prefs, selectedPersona, onPersonaSelected)
+                    Spacer(Modifier.height(ZenSpacing.xl))
+                    VersionFooter(onOpenDebug = onOpenDebug)
                     Spacer(Modifier.height(ZenSpacing.xxl))
                 }
             }
@@ -277,6 +280,35 @@ private fun UnlockedSettings(
 
     Spacer(Modifier.height(ZenSpacing.xl))
     SecondaryButton("Lock settings now", onClick = { prefs.lockNow() }, modifier = Modifier.fillMaxWidth())
+}
+
+/**
+ * Build identity footer — the anti-"did my sideload even change anything" measure.
+ * Seven taps opens the hidden diagnostics screen.
+ */
+@Composable
+private fun VersionFooter(onOpenDebug: () -> Unit) {
+    val c = LocalPersonaColors.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val version = remember { com.example.zen.data.AppVersion.describe(context) }
+    var taps by remember { mutableStateOf(0) }
+
+    Text(
+        text = "Zen $version",
+        style = MaterialTheme.typography.labelSmall,
+        color = c.textSecondary,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                taps++
+                if (taps >= 7) {
+                    taps = 0
+                    onOpenDebug()
+                }
+            }
+            .padding(vertical = ZenSpacing.sm)
+    )
 }
 
 @Composable
