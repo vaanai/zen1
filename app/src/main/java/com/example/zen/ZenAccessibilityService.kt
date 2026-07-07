@@ -127,7 +127,7 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
                 val detection = evaluate(pkg, root, eventClassName = null)
                 logDetection(pkg, "scroll", detection)
                 execute(machine.onDetection(detection, now))
-                if (detection is Detection.ShortForm) {
+                if (detection is Detection.ShortForm && isCountableScroll(event)) {
                     execute(machine.onScroll(pkg, now))
                 }
             }
@@ -150,6 +150,27 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
     private fun evaluate(pkg: String, root: AccessibilityNodeInfo?, eventClassName: CharSequence?): Detection {
         val metrics = resources.displayMetrics
         return engine.evaluate(pkg, root, eventClassName, metrics.widthPixels, metrics.heightPixels)
+    }
+
+    /**
+     * Whether a TYPE_VIEW_SCROLLED event plausibly represents a real swipe. Video players fire
+     * scroll events continuously from seek bars / progress surfaces while a single reel plays —
+     * spaced widely enough to survive the state machine's debounce — which is how a user got
+     * intervened mid-video without ever swiping. Real feed swipes come from pager/list widgets
+     * (ViewPager2 reports as RecyclerView) or carry a large scroll delta.
+     */
+    private fun isCountableScroll(event: AccessibilityEvent): Boolean {
+        val cls = event.className?.toString() ?: ""
+        val lower = cls.lowercase()
+        if (COUNTABLE_SCROLL_CLASSES.any { lower.contains(it) }) return true
+        val delta = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            kotlin.math.abs(event.scrollDeltaX) + kotlin.math.abs(event.scrollDeltaY)
+        } else 0
+        if (delta >= SWIPE_DELTA_PX) return true
+        if (prefs.diagnosticsEnabled) {
+            Log.d(SCAN_TAG, "uncounted scroll from class=$cls delta=$delta")
+        }
+        return false
     }
 
     private fun execute(actions: List<Action>) {
@@ -398,6 +419,13 @@ class ZenAccessibilityService : AccessibilityService(), InterventionHost {
     companion object {
         private const val SCAN_TAG = "ZenScan"
         private const val FRIEND_PASS_WINDOW_MS = 4000L
+
+        /** Widget classes whose scroll events count as swipes. */
+        private val COUNTABLE_SCROLL_CLASSES =
+            listOf("recycler", "viewpager", "pager", "listview", "gridview", "scrollview")
+
+        /** Minimum combined scroll delta (px) for an unrecognized class to count as a swipe. */
+        private const val SWIPE_DELTA_PX = 300
         private const val MAX_DEPTH = 30
         private const val MAX_NODES = 2000
         private const val DUMP_THROTTLE_MS = 2000L

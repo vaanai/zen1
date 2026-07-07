@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "configVersion": 2,
+  "configVersion": 3,
   "updatedAt": "2026-07-07",
   "apps": [
     {
@@ -12,7 +12,7 @@
       "requireVisible": true,
       "classNameHints": [],
       "negativeViewIds": [],
-      "exits": { "appHome": true, "messagesUri": "instagram://direct_inbox" }
+      "exits": { "appHome": true, "messagesUri": "instagram://direct-inbox" }
     },
     {
       "key": "youtube",
